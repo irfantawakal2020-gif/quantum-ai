@@ -60,10 +60,6 @@ def show_message(role, text):
                     st.markdown(":green[" + safe_line + "]")
         else:
             st.markdown(text)
-            safe_text = text.replace("]", "\\]")
-            st.markdown(":green[" + safe_text + "]")
-        else:
-            st.markdown(text)
 
 
 for message in st.session_state.messages:
