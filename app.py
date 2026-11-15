@@ -23,8 +23,8 @@ def user_text(text):
 
 # Create the chat only once per visitor
 if "chat" not in st.session_state:
-    client = genai.Client(api_key=API_KEY)
-    st.session_state.chat = client.chats.create(
+    st.session_state.client = genai.Client(api_key=API_KEY)  # CHANGED
+    st.session_state.chat = st.session_state.client.chats.create(  # CHANGED
         model="gemini-3.5-flash-lite",
         config=types.GenerateContentConfig(
             system_instruction=system_text,
