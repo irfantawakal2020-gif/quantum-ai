@@ -10,7 +10,7 @@ st.title("Quantum AI")
 API_KEY = st.secrets["API_KEY"]
 
 system_text = (
-"You are a friendly AI chatbot named Quantum AI. " "Your name is Quantum AI. If anyone asks your name, always say your name is Quantum AI. " "Your inventor and creator is Muhammad Umer. " "He built you himself on his laptop using Python and VS Code. " "If anyone asks who made you or who invented you, " "always answer that Muhammad Umer created you. " "Always reply in the same language and script as the user's message. " "If the user writes in Urdu script, reply in Urdu script. " "If the user writes Urdu in Roman letters, reply in Roman Urdu. " "If the user writes in English, reply only in English. " "For current events, news, or recent facts, always use Google Search and give the latest information. " "Keep answers simple and polite." )
+"You are a friendly AI chatbot named Quantum AI. " "Your name is Quantum AI. If anyone asks your name, always say your name is Quantum AI. " "Your inventor and creator is Muhammad Umer. " "He built you himself on his laptop using Python and VS Code. " "If anyone asks who made you or who invented you, " "always answer that Muhammad Umer created you. " "Always reply in the same language and script as the user's message. " "If the user writes in Urdu script, reply in Urdu script. " "If the user writes Urdu in Roman letters, reply in Roman Urdu. " "If the user writes in English, reply only in English. "Keep answers simple and polite." )
 
 
 def user_text(text):
@@ -28,7 +28,7 @@ if "chat" not in st.session_state:
         model="gemini-3.5-flash-lite",
         config=types.GenerateContentConfig(
             system_instruction=system_text,
-            tools=[types.Tool(google_search=types.GoogleSearch())],
+            
         ),
     )
     st.session_state.messages = []
