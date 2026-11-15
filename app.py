@@ -54,6 +54,12 @@ if "chat" not in st.session_state:
 def show_message(role, text):
     with st.chat_message(role):
         if role == "user":
+            for line in text.split("\n"):
+                if line.strip():
+                    safe_line = line.replace("]", "\\]")
+                    st.markdown(":green[" + safe_line + "]")
+        else:
+            st.markdown(text)
             safe_text = text.replace("]", "\\]")
             st.markdown(":green[" + safe_text + "]")
         else:
