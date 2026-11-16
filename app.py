@@ -5,7 +5,7 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-MODEL_NAME = "gemini-3.5-flash-lite"
+MODEL_NAME = "gemini-3.8-flash-lite"
 LOGO_FILE = "logo.png"
 
 st.set_page_config(page_title="Quantum AI", page_icon="🤖")
