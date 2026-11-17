@@ -1,8 +1,8 @@
-import os
 from datetime import date
+import os
 
-import streamlit as st
 from openai import OpenAI
+import streamlit as st
 
 MODEL_NAME = "grok-beta"
 LOGO_FILE = "logo.png"
@@ -11,16 +11,17 @@ st.set_page_config(page_title="Quantum AI", page_icon="🤖")
 
 col_logo, col_name = st.columns([1, 6])
 with col_logo:
-    if os.path.exists(LOGO_FILE):
-        st.image(LOGO_FILE, width=70)
+  if os.path.exists(LOGO_FILE):
+    st.image(LOGO_FILE, width=70)
 with col_name:
-    st.title("Quantum AI")
+  st.title("Quantum AI")
 
 today = date.today().strftime("%A, %d %B %Y")
 
 system_text = (
     "You are a friendly AI chatbot named Quantum AI. "
-    "Your name is Quantum AI. If anyone asks your name, always say your name is Quantum AI. "
+    "Your name is Quantum AI. If anyone asks your name, always say your name"
+    " is Quantum AI. "
     "Your inventor and creator is Muhammad Umer. "
     "He built you himself on his laptop using Python and VS Code. "
     "If anyone asks who made you or who invented you, "
@@ -39,73 +40,41 @@ system_text = (
 )
 
 if "messages" not in st.session_state:
-    st.session_state.client = OpenAI(
-        api_key=st.secrets["GROK_API_KEY"], base_url="https://api.x.ai/v1"
-    )
-    st.session_state.messages = [
-        {"role": "system", "content": system_text}
-    ]
+  st.session_state.client = OpenAI(
+      api_key=st.secrets["GROK_API_KEY"], base_url="https://api.x.ai/v1"
+  )
+  st.session_state.messages = [{"role": "system", "content": system_text}]
 
 
 def show_message(role, text):
-    with st.chat_message(role):
-        if role == "user":
-            for line in text.split("\n"):
-                if line.strip():
-                    safe_line = line.replace("]", "\\]")
-                    st.markdown(":green[" + safe_line + "]")
-        else:
-            st.markdown(text)
+  with st.chat_message(role):
+    if role == "user":
+      for line in text.split("\n"):
+        if line.strip():
+          safe_line = line.replace("]", "\\]")
+          st.markdown(":green[" + safe_line + "]")
+    else:
+      st.markdown(text)
 
 
 for message in st.session_state.messages:
-    show_message(message["role"], message["content"])
+  show_message(message["role"], message["content"])
 
-prompt = st.chat_input(
-    "Type your question",
-    accept_file="multiple",
-    file_type=["pdf", "png", "jpg", "jpeg"],
-    accept_audio=True,
-)
+prompt = st.chat_input("Type your question")
 
 if prompt:
-    parts = []
-    shown_text = prompt.text or ""
+  st.session_state.messages.append({"role": "user", "content": prompt})
+  show_message("user", prompt)
 
-    if prompt.text:
-        parts.append(prompt.text)
-
-    for uploaded in prompt.files:
-        parts.append(
-            types.Part.from_bytes(
-                data=uploaded.getvalue(),
-                mime_type=uploaded.type,
-            )
+  with st.chat_message("assistant"):
+    with st.spinner("Thinking..."):
+      try:
+        response = st.session_state.client.chat.completions.create(
+            model=MODEL_NAME, messages=st.session_state.messages
         )
-        shown_text = shown_text + "\n\n📎 " + uploaded.name
+        answer = response.choices[0].message.content
+      except Exception as error:
+        answer = "Error: " + str(error)
+    st.markdown(answer)
 
-    if prompt.audio:
-        parts.append(
-            types.Part.from_bytes(
-                data=prompt.audio.getvalue(),
-                mime_type="audio/wav",
-            )
-        )
-        shown_text = shown_text + "\n\n🎤 Voice message"
-
-    if not prompt.text:
-        parts.append("Please respond to the attached file or voice message.")
-
-    st.session_state.messages.append({"role": "user", "text": shown_text})
-    show_message("user", shown_text)
-
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                response = st.session_state.chat.send_message(parts)
-                answer = response.text
-            except Exception as error:
-                answer = "Error: " + str(error)
-        st.markdown(answer)
-
-    st.session_state.messages.append({"role": "assistant", "text": answer})
+  st.session_state.messages.append({"role": "assistant", "content": answer})
