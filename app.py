@@ -2,10 +2,9 @@ import os
 from datetime import date
 
 import streamlit as st
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
-MODEL_NAME = "gemini-3.8-flash-lite"
+MODEL_NAME = "grok-beta"
 LOGO_FILE = "logo.png"
 
 st.set_page_config(page_title="Quantum AI", page_icon="🤖")
@@ -39,16 +38,13 @@ system_text = (
     "Keep answers simple and polite."
 )
 
-if "chat" not in st.session_state:
-    client = genai.Client(api_key=st.secrets["API_KEY"])
-    st.session_state.chat = client.chats.create(
-        model=MODEL_NAME,
-        config=types.GenerateContentConfig(
-            system_instruction=system_text,
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-        ),
+if "messages" not in st.session_state:
+    st.session_state.client = OpenAI(
+        api_key=st.secrets["GROK_API_KEY"], base_url="https://api.x.ai/v1"
     )
-    st.session_state.messages = []
+    st.session_state.messages = [
+        {"role": "system", "content": system_text}
+    ]
 
 
 def show_message(role, text):
