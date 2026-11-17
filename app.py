@@ -4,7 +4,7 @@ import os
 from openai import OpenAI
 import streamlit as st
 
-MODEL_NAME = "grok-beta"
+MODEL_NAME = "grok-2"
 LOGO_FILE = "logo.png"
 
 st.set_page_config(page_title="Quantum AI", page_icon="🤖")
