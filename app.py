@@ -59,7 +59,7 @@ def show_message(role, text):
 
 
 for message in st.session_state.messages:
-    show_message(message["role"], message["text"])
+    show_message(message["role"], message["content"])
 
 prompt = st.chat_input(
     "Type your question",
