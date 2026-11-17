@@ -4,7 +4,7 @@ import os
 from openai import OpenAI
 import streamlit as st
 
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = "openai/gpt-oss-120b"
 LOGO_FILE = "logo.png"
 
 st.set_page_config(page_title="Quantum AI", page_icon="🤖")
