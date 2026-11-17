@@ -4,7 +4,7 @@ import os
 from openai import OpenAI
 import streamlit as st
 
-MODEL_NAME = "grok-2-latest"
+MODEL_NAME = "llama-3.3-70b-versatile"
 LOGO_FILE = "logo.png"
 
 st.set_page_config(page_title="Quantum AI", page_icon="🤖")
@@ -27,11 +27,6 @@ system_text = (
     "If anyone asks who made you or who invented you, "
     "always answer that Muhammad Umer created you. "
     "Today's date is " + today + ". "
-    "For questions about current events, current office holders, "
-    "news, prices or anything that may have changed recently, "
-    "use Google Search and trust the search results over your own memory. "
-    "The user may attach PDF files, images or voice messages. "
-    "Read them carefully and answer based on them. "
     "Always reply in the same language and script as the user's message. "
     "If the user writes in Urdu script, reply in Urdu script. "
     "If the user writes Urdu in Roman letters, reply in Roman Urdu. "
@@ -41,7 +36,7 @@ system_text = (
 
 if "messages" not in st.session_state:
   st.session_state.client = OpenAI(
-      api_key=st.secrets["GROK_API_KEY"], base_url="https://api.x.ai/v1"
+      api_key=st.secrets["GROK_API_KEY"], base_url="https://api.groq.com/openai/v1"
   )
   st.session_state.messages = [{"role": "system", "content": system_text}]
 
@@ -58,7 +53,8 @@ def show_message(role, text):
 
 
 for message in st.session_state.messages:
-  show_message(message["role"], message["content"])
+  if message["role"] != "system":
+    show_message(message["role"], message["content"])
 
 prompt = st.chat_input("Type your question")
 
