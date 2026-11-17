@@ -36,7 +36,7 @@ system_text = (
 
 if "messages" not in st.session_state:
   st.session_state.client = OpenAI(
-      api_key=st.secrets["GROK_API_KEY"], base_url="https://api.groq.com/openai/v1"
+      api_key=st.secrets["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1"
   )
   st.session_state.messages = [{"role": "system", "content": system_text}]
 
