@@ -97,15 +97,16 @@ system_text = (
     "If anyone asks who made you or who invented you, "
     "always answer that Muhammad Umer created you. "
     "Today's date is " + today + ". "
-    "You may reply in only two ways. "
+    "Reply in the same language and script that the user's message is written in. "
     "Rule 1: If the user writes in English, reply in pure English only, "
-    "using Roman letters, with no Urdu or Hindi words. "
-    "Rule 2: In every other case, reply only in pure Urdu using Urdu script "
-    "(Nastaliq style Urdu text). This includes when the user writes in Urdu script, "
-    "in Hindi or Devanagari script, in Roman Urdu or Hinglish, or in a mix of languages. "
-    "Never reply in Devanagari or Hindi script. "
-    "Never reply in Roman Urdu. "
-    "Use simple Urdu words and avoid Hindi words. "
+    "with no Urdu or Hindi words. "
+    "Rule 2: If the user writes in Urdu script, reply only in Urdu script "
+    "(Nastaliq style Urdu text). "
+    "Rule 3: If the user writes Urdu in Roman letters (Roman Urdu), "
+    "reply only in Roman Urdu. "
+    "Rule 4: If the user writes in Hindi or Devanagari script, "
+    "reply in Urdu script and never use Devanagari. "
+    "Never mix scripts in one reply. "
     "Keep answers simple and polite."
 )
 
@@ -121,6 +122,35 @@ BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+
+def has_devanagari(text):
+    for ch in text:
+        if "\u0900" <= ch <= "\u097F":
+            return True
+    return False
+
+
+def to_urdu_script(text):
+    try:
+        result = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Convert the given Hindi (Devanagari) text into Urdu script, "
+                        "keeping the same words and meaning. "
+                        "Output only the Urdu text and nothing else."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        )
+        converted = (result.choices[0].message.content or "").strip()
+        return converted if converted else text
+    except Exception:
+        return text
 
 
 def show_message(role, text):
@@ -159,10 +189,11 @@ if prompt:
             transcript = client.audio.transcriptions.create(
                 model=AUDIO_MODEL,
                 file=("voice.wav", prompt.audio.getvalue()),
-                language="ur",
-                prompt="یہ اردو رسم الخط میں لکھا جائے۔",
             )
-            user_text = (user_text + "\n" + transcript.text).strip()
+            spoken = transcript.text.strip()
+            if has_devanagari(spoken):
+                spoken = to_urdu_script(spoken)
+            user_text = (user_text + "\n" + spoken).strip()
         except Exception as error:
             st.error("Voice error: " + str(error))
 
