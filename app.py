@@ -6,12 +6,17 @@ from openai import OpenAI
 import streamlit as st
 
 MODEL_NAME = "openai/gpt-oss-120b"
-AUDIO_MODEL = "whisper-large-v3-turbo"
+AUDIO_MODEL = "whisper-large-v3"
 LOGO_FILE = "logo.png"
 MAX_HISTORY = 12
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
+HINTS = {
+    "English": "This is a clear English sentence.",
+    "اردو": "یہ ایک صاف اردو جملہ ہے۔",
+    "Auto": "Hello, how are you? آپ کیسے ہیں؟",
+}
 
 has_logo = os.path.exists(LOGO_FILE)
 
@@ -172,6 +177,8 @@ def transcribe(audio_bytes):
         model=AUDIO_MODEL,
         file=("voice.wav", audio_bytes),
         response_format="verbose_json",
+        temperature=0,
+        prompt=HINTS.get(mic_choice, HINTS["Auto"]),
         **options,
     )
     detected = (getattr(result, "language", "") or "").lower()
