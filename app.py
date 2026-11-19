@@ -6,6 +6,7 @@ from openai import OpenAI
 import streamlit as st
 
 MODEL_NAME = "openai/gpt-oss-120b"
+AUDIO_MODEL = "whisper-large-v3-turbo"
 LOGO_FILE = "logo.png"
 MAX_HISTORY = 12
 
@@ -143,11 +144,26 @@ else:
 for message in st.session_state.messages:
     show_message(message["role"], message["content"])
 
-prompt = st.chat_input("Type your question")
+prompt = st.chat_input("Type your question", accept_audio=True)
 
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    show_message("user", prompt)
+    user_text = prompt.text or ""
+
+    if prompt.audio:
+        try:
+            transcript = client.audio.transcriptions.create(
+                model=AUDIO_MODEL,
+                file=("voice.wav", prompt.audio.getvalue()),
+            )
+            user_text = (user_text + "\n" + transcript.text).strip()
+        except Exception as error:
+            st.error("Voice error: " + str(error))
+
+    if not user_text.strip():
+        st.stop()
+
+    st.session_state.messages.append({"role": "user", "content": user_text})
+    show_message("user", user_text)
 
     recent = st.session_state.messages[-MAX_HISTORY:]
 
