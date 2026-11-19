@@ -70,9 +70,38 @@ footer { visibility: hidden; }
     border-radius: 16px;
     padding: 0.8rem 1rem;
 }
+[data-testid="stBottom"],
+[data-testid="stBottom"] > div {
+    background: transparent !important;
+}
+[data-testid="stBottomBlockContainer"] {
+    padding-bottom: 1.8rem;
+}
 [data-testid="stChatInput"] {
-    border: 1px solid #7c4dff;
-    border-radius: 18px;
+    border: 1px solid #8b5cf6;
+    border-radius: 20px;
+    box-shadow:
+        0 0 10px 2px rgba(109, 40, 217, 0.55),
+        0 0 28px 6px rgba(76, 29, 149, 0.45);
+    animation: qaGlow 3s ease-in-out infinite;
+}
+[data-testid="stChatInput"]:focus-within {
+    animation: none;
+    box-shadow:
+        0 0 14px 4px rgba(139, 92, 246, 0.85),
+        0 0 44px 12px rgba(91, 33, 182, 0.6);
+}
+@keyframes qaGlow {
+    0%, 100% {
+        box-shadow:
+            0 0 8px 1px rgba(109, 40, 217, 0.45),
+            0 0 22px 4px rgba(76, 29, 149, 0.35);
+    }
+    50% {
+        box-shadow:
+            0 0 14px 3px rgba(139, 92, 246, 0.7),
+            0 0 38px 9px rgba(91, 33, 182, 0.55);
+    }
 }
 </style>
 """
