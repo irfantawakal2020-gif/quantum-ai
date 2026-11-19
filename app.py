@@ -97,10 +97,15 @@ system_text = (
     "If anyone asks who made you or who invented you, "
     "always answer that Muhammad Umer created you. "
     "Today's date is " + today + ". "
-    "Always reply in the same language and script as the user's message. "
-    "If the user writes in Urdu script, reply in Urdu script. "
-    "If the user writes Urdu in Roman letters, reply in Roman Urdu. "
-    "If the user writes in English, reply only in English. "
+    "You may reply in only two ways. "
+    "Rule 1: If the user writes in English, reply in pure English only, "
+    "using Roman letters, with no Urdu or Hindi words. "
+    "Rule 2: In every other case, reply only in pure Urdu using Urdu script "
+    "(Nastaliq style Urdu text). This includes when the user writes in Urdu script, "
+    "in Hindi or Devanagari script, in Roman Urdu or Hinglish, or in a mix of languages. "
+    "Never reply in Devanagari or Hindi script. "
+    "Never reply in Roman Urdu. "
+    "Use simple Urdu words and avoid Hindi words. "
     "Keep answers simple and polite."
 )
 
@@ -154,6 +159,8 @@ if prompt:
             transcript = client.audio.transcriptions.create(
                 model=AUDIO_MODEL,
                 file=("voice.wav", prompt.audio.getvalue()),
+                language="ur",
+                prompt="یہ اردو رسم الخط میں لکھا جائے۔",
             )
             user_text = (user_text + "\n" + transcript.text).strip()
         except Exception as error:
