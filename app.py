@@ -10,6 +10,9 @@ AUDIO_MODEL = "whisper-large-v3-turbo"
 LOGO_FILE = "logo.png"
 MAX_HISTORY = 12
 
+ALLOWED_LANGS = ["english", "urdu", "hindi"]
+LANG_CODES = {"English": "en", "اردو": "ur"}
+
 has_logo = os.path.exists(LOGO_FILE)
 
 st.set_page_config(
@@ -87,6 +90,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+mic_choice = st.radio(
+    "🎤 Mic language",
+    ["Auto", "English", "اردو"],
+    horizontal=True,
+)
+
 today = date.today().strftime("%A, %d %B %Y")
 
 system_text = (
@@ -107,6 +116,7 @@ system_text = (
     "Rule 4: If the user writes in Hindi or Devanagari script, "
     "reply in Urdu script and never use Devanagari. "
     "Never mix scripts in one reply. "
+    "Never reply in any language other than English, Urdu or Roman Urdu. "
     "Keep answers simple and polite."
 )
 
@@ -153,6 +163,24 @@ def to_urdu_script(text):
         return text
 
 
+def transcribe(audio_bytes):
+    options = {}
+    code = LANG_CODES.get(mic_choice)
+    if code:
+        options["language"] = code
+    result = client.audio.transcriptions.create(
+        model=AUDIO_MODEL,
+        file=("voice.wav", audio_bytes),
+        response_format="verbose_json",
+        **options,
+    )
+    detected = (getattr(result, "language", "") or "").lower()
+    text = (result.text or "").strip()
+    if not code and detected and detected not in ALLOWED_LANGS:
+        return None
+    return text
+
+
 def show_message(role, text):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
@@ -186,14 +214,16 @@ if prompt:
 
     if prompt.audio:
         try:
-            transcript = client.audio.transcriptions.create(
-                model=AUDIO_MODEL,
-                file=("voice.wav", prompt.audio.getvalue()),
-            )
-            spoken = transcript.text.strip()
-            if has_devanagari(spoken):
-                spoken = to_urdu_script(spoken)
-            user_text = (user_text + "\n" + spoken).strip()
+            spoken = transcribe(prompt.audio.getvalue())
+            if spoken is None:
+                st.warning(
+                    "آواز کی زبان پہچانی نہیں گئی۔ اوپر Mic language میں "
+                    "English یا اردو چن کر دوبارہ بولیں۔"
+                )
+            elif spoken:
+                if has_devanagari(spoken):
+                    spoken = to_urdu_script(spoken)
+                user_text = (user_text + "\n" + spoken).strip()
         except Exception as error:
             st.error("Voice error: " + str(error))
 
