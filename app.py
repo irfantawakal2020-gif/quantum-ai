@@ -14,7 +14,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 import streamlit as st
 import streamlit.components.v1 as components
 
-MODEL_NAME = "openai/gpt-oss-20b"
+MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
 SMALL_MODEL = "llama-3.1-8b-instant"
 LOGO_FILE = "logo.png"
