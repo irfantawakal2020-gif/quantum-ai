@@ -5,13 +5,14 @@ import os
 import re
 
 from openai import OpenAI
+from tavily import TavilyClient
 import streamlit as st
 import streamlit.components.v1 as components
 
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
 LOGO_FILE = "logo.png"
-MAX_HISTORY = 30
+MAX_HISTORY = 20
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
@@ -237,10 +238,44 @@ system_text = (
 
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GROK_API_KEY")
 
+if not API_KEY:
+    st.error("API key نہیں ملی۔ Streamlit secrets میں GROQ_API_KEY شامل کریں۔")
+    st.stop()
+
 client = OpenAI(
     api_key=API_KEY,
     base_url="https://api.groq.com/openai/v1",
 )
+
+# ---------- Web search (Tavily) ----------
+TAVILY_KEY = st.secrets.get("TAVILY_API_KEY")
+tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
+
+SEARCH_WORDS = [
+    "president", "prime minister", "current", "latest", "news", "today",
+    "price", "rate", "score", "weather", "who is", "winner",
+    "صدر", "وزیراعظم", "وزیر اعظم", "آج", "تازہ", "موجودہ", "خبر", "قیمت",
+    "sadar", "wazir", "aaj", "taza", "maujooda", "khabar", "qeemat",
+]
+
+
+def needs_search(text):
+    low = text.lower()
+    return any(word in low for word in SEARCH_WORDS)
+
+
+def web_context(query):
+    if not tavily:
+        return ""
+    try:
+        res = tavily.search(query=query, max_results=4)
+        lines = []
+        for r in res.get("results", []):
+            lines.append("- " + r["title"] + ": " + r["content"][:400])
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
 
 USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
@@ -489,9 +524,18 @@ if prompt:
         with text_box:
             with st.spinner("Thinking..."):
                 try:
+                    extra = ""
+                    if needs_search(user_text):
+                        info = web_context(user_text)
+                        if info:
+                            extra = (
+                                "\n\nLatest web search results. For current facts, "
+                                "trust these over your own memory:\n" + info
+                            )
                     answer = fix_math(
                         ask_model(
-                            [{"role": "system", "content": system_text}] + recent
+                            [{"role": "system", "content": system_text + extra}]
+                            + recent
                         )
                     )
                 except Exception as error:
