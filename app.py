@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
 LOGO_FILE = "logo.png"
-MAX_HISTORY = 20
+MAX_HISTORY = 30
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
@@ -251,30 +251,63 @@ client = OpenAI(
 TAVILY_KEY = st.secrets.get("TAVILY_API_KEY")
 tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
 
-SEARCH_WORDS = [
-    "president", "prime minister", "current", "latest", "news", "today",
-    "price", "rate", "score", "weather", "who is", "winner",
-    "صدر", "وزیراعظم", "وزیر اعظم", "آج", "تازہ", "موجودہ", "خبر", "قیمت",
-    "sadar", "wazir", "aaj", "taza", "maujooda", "khabar", "qeemat",
-]
 
-
-def needs_search(text):
-    low = text.lower()
-    return any(word in low for word in SEARCH_WORDS)
+def make_search_query(history):
+    """Ask the model if a web search is needed. Returns an English query or ''."""
+    convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-4:])
+    try:
+        text = ask_model(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Today's date is " + today + ". "
+                        "Decide whether answering the user's LAST message needs "
+                        "up-to-date information from the internet, such as current "
+                        "office holders (presidents, prime ministers, CEOs), news, "
+                        "prices, sports, weather, or any recent event or fact that "
+                        "can change. "
+                        "If it is NOT needed (math, science, coding, general "
+                        "knowledge, chit-chat), reply with exactly: NO. "
+                        "If it is needed, reply with ONLY a short English web search "
+                        "query (maximum 10 words) and add the year " + today[-4:]
+                        + " when useful. "
+                        "Translate Urdu, Roman Urdu or Hindi into English. "
+                        "Output nothing else."
+                    ),
+                },
+                {"role": "user", "content": convo},
+            ]
+        )
+    except Exception:
+        return ""
+    query = (text or "").strip().strip('"').strip()
+    if not query or query.upper().rstrip(".") == "NO":
+        return ""
+    return query[:200]
 
 
 def web_context(query):
     if not tavily:
-        return ""
+        return "", "TAVILY_API_KEY Secrets میں نہیں ملی"
     try:
-        res = tavily.search(query=query, max_results=4)
-        lines = []
+        res = tavily.search(
+            query=query,
+            search_depth="advanced",
+            max_results=5,
+            include_answer=True,
+        )
+        parts = []
+        if res.get("answer"):
+            parts.append("Quick answer: " + res["answer"])
         for r in res.get("results", []):
-            lines.append("- " + r["title"] + ": " + r["content"][:400])
-        return "\n".join(lines)
-    except Exception:
-        return ""
+            parts.append(
+                "- " + r.get("title", "") + " (" + r.get("url", "") + "): "
+                + r.get("content", "")[:600]
+            )
+        return "\n".join(parts), ""
+    except Exception as error:
+        return "", str(error)[:200]
 
 
 USER_AVATAR = "🧑‍💻"
@@ -520,18 +553,28 @@ if prompt:
         text_box = st.container()
         speak_box = st.container()
         answer = None
+        search_note = ""
 
         with text_box:
             with st.spinner("Thinking..."):
                 try:
                     extra = ""
-                    if needs_search(user_text):
-                        info = web_context(user_text)
+                    query = make_search_query(st.session_state.messages)
+                    if query:
+                        info, err = web_context(query)
                         if info:
+                            search_note = "🔎 Web search: " + query
                             extra = (
-                                "\n\nLatest web search results. For current facts, "
-                                "trust these over your own memory:\n" + info
+                                "\n\nFRESH WEB SEARCH RESULTS (searched today, "
+                                + today + ", for: " + query + "):\n" + info
+                                + "\n\nFor current facts, answer ONLY from these "
+                                "results. Ignore your own memory and ignore any "
+                                "earlier answers in this chat that disagree with "
+                                "them. If the results do not clearly contain the "
+                                "answer, say you could not confirm it."
                             )
+                        else:
+                            search_note = "⚠️ Search failed: " + (err or "no results")
                     answer = fix_math(
                         ask_model(
                             [{"role": "system", "content": system_text + extra}]
@@ -548,6 +591,8 @@ if prompt:
                     components.html(speak_html(answer), height=48)
             with text_box:
                 st.markdown(answer)
+                if search_note:
+                    st.caption(search_note)
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer}
             )
