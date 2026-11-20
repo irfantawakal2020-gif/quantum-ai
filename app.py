@@ -262,9 +262,26 @@ TAVILY_KEY = st.secrets.get("TAVILY_API_KEY")
 tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
 
 
+SEARCH_WORDS = [
+    "president", "prime minister", "minister", "ceo", "current", "latest",
+    "news", "today", "price", "rate", "score", "weather", "who is", "winner",
+    "election", "match", "dollar", "gold",
+    "صدر", "وزیراعظم", "وزیر اعظم", "وزیر", "آج", "تازہ", "موجودہ", "خبر",
+    "قیمت", "ڈالر", "سونا", "میچ", "انتخاب",
+    "sadar", "wazir", "aaj", "taza", "maujooda", "khabar", "qeemat",
+    "dollar", "sona", "match",
+]
+
+
+def needs_search(text):
+    low = (text or "").lower()
+    return any(word in low for word in SEARCH_WORDS)
+
+
 def make_search_query(history):
-    """Ask the model if a web search is needed. Returns an English query or ''."""
-    convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-4:])
+    """Returns (query, warning). An empty query means: no web search."""
+    last = history[-1]["content"] if history else ""
+    convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-3:])
     try:
         text = ask_small(
             [
@@ -283,22 +300,31 @@ def make_search_query(history):
                         "query (maximum 10 words) and add the year " + today[-4:]
                         + " when useful. "
                         "Translate Urdu, Roman Urdu or Hindi into English. "
+                        "Examples: 'amrika ka sadar kaun hai' -> US president "
+                        + today[-4:] + "; 'hello' -> NO; '2+2 kitne hote hain' -> NO; "
+                        "'aaj sone ki qeemat' -> gold price today Pakistan. "
                         "Output nothing else."
                     ),
                 },
                 {"role": "user", "content": convo},
-            ]
+            ],
+            max_tokens=60,
         )
-    except Exception:
-        return ""
+    except Exception as error:
+        if needs_search(last):
+            return last[:200], "⚠️ Search check failed, searched with your text"
+        return "", "⚠️ Search check failed: " + str(error)[:80]
     query = (text or "").strip().strip('"').strip()
-    if (
+    said_no = (
         not query
         or query.upper().rstrip(".!") == "NO"
         or re.match(r"(?i)no\s*[.,:;!\-(]", query)
-    ):
-        return ""
-    return query[:200]
+    )
+    if said_no:
+        if needs_search(last):
+            return last[:200], ""
+        return "", ""
+    return query[:200], ""
 
 
 def web_context(query):
@@ -785,7 +811,10 @@ if prompt:
                             video_note = "🎬 YouTube transcript loaded"
                         else:
                             video_note = "⚠️ YouTube transcript failed: " + yt_err
-                    query = "" if vid else make_search_query(st.session_state.messages)
+                    if vid:
+                        query, qwarn = "", ""
+                    else:
+                        query, qwarn = make_search_query(st.session_state.messages)
                     if query:
                         info, err = web_context(query)
                         if info:
@@ -822,7 +851,11 @@ if prompt:
                             "contains. Tell the user honestly that you could not "
                             "read this video."
                         )
-                    search_note = (video_note + "  " + search_note).strip()
+                    if not query and not qwarn and not vid:
+                        search_note = "ℹ️ No web search for this question"
+                    search_note = (
+                        video_note + "  " + qwarn + "  " + search_note
+                    ).strip()
                     answer = fix_math(
                         ask_model(
                             [{"role": "system", "content": system_text + extra}]
