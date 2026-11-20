@@ -180,7 +180,7 @@ BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-SPEAK_TEMPLATE = """
+SPEAK_TEMPLATE = r"""
 <div style="font-family: sans-serif;">
   <button id="listen" style="background:#6d28d9;color:#fff;border:none;
     border-radius:20px;padding:6px 14px;cursor:pointer;margin-right:6px;">
@@ -191,26 +191,51 @@ SPEAK_TEMPLATE = """
 </div>
 <script>
 const text = __TEXT__;
-function speak() {
+
+function speakNow() {
   const s = window.speechSynthesis;
   if (!s) { return; }
   s.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  const isUrdu = /[\\u0600-\\u06FF]/.test(text);
-  u.lang = isUrdu ? "ur-PK" : "en-US";
+  const isUrdu = /[\u0600-\u06FF]/.test(text);
+  const lang = isUrdu ? "ur-PK" : "en-US";
+  const prefix = lang.slice(0, 2);
+  let voice = null;
   const voices = s.getVoices();
-  const prefix = u.lang.slice(0, 2).toLowerCase();
   for (const v of voices) {
-    if (v.lang.toLowerCase().startsWith(prefix)) { u.voice = v; break; }
+    if (v.lang.toLowerCase().startsWith(prefix)) { voice = v; break; }
   }
-  u.rate = 0.95;
-  s.speak(u);
+  const parts = text.match(/[^.!?\u06D4\u061F\n]+[.!?\u06D4\u061F]*/g) || [text];
+  for (const part of parts) {
+    const t = part.trim();
+    if (!t) { continue; }
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = lang;
+    if (voice) { u.voice = voice; }
+    u.rate = 1.0;
+    s.speak(u);
+  }
 }
-document.getElementById("listen").onclick = speak;
+
+function start() {
+  const s = window.speechSynthesis;
+  if (!s) { return; }
+  if (s.getVoices().length === 0) {
+    let done = false;
+    const go = function () {
+      if (!done) { done = true; speakNow(); }
+    };
+    s.onvoiceschanged = go;
+    setTimeout(go, 400);
+  } else {
+    speakNow();
+  }
+}
+
+document.getElementById("listen").onclick = speakNow;
 document.getElementById("stop").onclick = function () {
   if (window.speechSynthesis) { window.speechSynthesis.cancel(); }
 };
-setTimeout(speak, 300);
+start();
 </script>
 """
 
