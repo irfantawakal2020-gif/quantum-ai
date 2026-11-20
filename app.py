@@ -3,16 +3,18 @@ from datetime import date
 import json
 import os
 import re
+import urllib.request
 
 from openai import OpenAI
 from tavily import TavilyClient
+from youtube_transcript_api import YouTubeTranscriptApi
 import streamlit as st
 import streamlit.components.v1 as components
 
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
 LOGO_FILE = "logo.png"
-MAX_HISTORY = 30
+MAX_HISTORY = 20
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
@@ -310,6 +312,58 @@ def web_context(query):
         return "", str(error)[:200]
 
 
+# ---------- YouTube ----------
+YT_PATTERN = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:[^\s]*&)?v=|shorts/|embed/|live/)|youtu\.be/)"
+    r"([A-Za-z0-9_-]{11})"
+)
+MAX_VIDEO_CHARS = 9000
+
+
+def find_youtube_id(text):
+    match = YT_PATTERN.search(text or "")
+    return match.group(1) if match else ""
+
+
+def youtube_title(video_id):
+    try:
+        url = (
+            "https://www.youtube.com/oembed?url="
+            "https://www.youtube.com/watch?v=" + video_id + "&format=json"
+        )
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return json.loads(r.read().decode("utf-8")).get("title", "")
+    except Exception:
+        return ""
+
+
+def youtube_transcript(video_id):
+    """Returns (text, error)."""
+    langs = ["ur", "hi", "en"]
+    try:
+        api = YouTubeTranscriptApi()
+        if hasattr(api, "fetch"):
+            try:
+                data = api.fetch(video_id, languages=langs)
+            except Exception:
+                first = next(iter(api.list(video_id)))
+                data = first.fetch()
+            text = " ".join(s.text for s in data)
+        else:
+            data = YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
+            text = " ".join(d["text"] for d in data)
+    except Exception as error:
+        return "", str(error)[:200]
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return "", "ویڈیو میں کیپشنز نہیں ملے"
+    if len(text) > MAX_VIDEO_CHARS:
+        head = text[:6000]
+        tail = text[-3000:]
+        text = head + " [...video trimmed...] " + tail
+    return text, ""
+
+
 USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
@@ -510,6 +564,8 @@ def show_message(role, text):
 if st.session_state.messages:
     if st.button("🗑️ New chat"):
         st.session_state.messages = []
+        for key in ("video_id", "video_text", "video_title"):
+            st.session_state.pop(key, None)
         st.rerun()
 else:
     st.markdown(
@@ -559,7 +615,20 @@ if prompt:
             with st.spinner("Thinking..."):
                 try:
                     extra = ""
-                    query = make_search_query(st.session_state.messages)
+                    video_note = ""
+                    vid = find_youtube_id(user_text)
+                    if vid and vid != st.session_state.get("video_id"):
+                        for key in ("video_id", "video_text", "video_title"):
+                            st.session_state.pop(key, None)
+                        transcript, yt_err = youtube_transcript(vid)
+                        if transcript:
+                            st.session_state.video_id = vid
+                            st.session_state.video_text = transcript
+                            st.session_state.video_title = youtube_title(vid)
+                            video_note = "🎬 YouTube transcript loaded"
+                        else:
+                            video_note = "⚠️ YouTube transcript failed: " + yt_err
+                    query = "" if vid else make_search_query(st.session_state.messages)
                     if query:
                         info, err = web_context(query)
                         if info:
@@ -575,6 +644,24 @@ if prompt:
                             )
                         else:
                             search_note = "⚠️ Search failed: " + (err or "no results")
+                    if st.session_state.get("video_text"):
+                        extra += (
+                            "\n\nYOUTUBE VIDEO TRANSCRIPT (title: "
+                            + st.session_state.get("video_title", "")
+                            + "):\n" + st.session_state.video_text
+                            + "\n\nThe user is asking about this video. Answer "
+                            "from the transcript. If the transcript does not "
+                            "contain the answer, say so. Long videos may be "
+                            "trimmed in the middle."
+                        )
+                    elif vid:
+                        extra += (
+                            "\n\nThe user shared a YouTube link but its transcript "
+                            "could not be read. Do NOT guess what the video "
+                            "contains. Tell the user honestly that you could not "
+                            "read this video."
+                        )
+                    search_note = (video_note + "  " + search_note).strip()
                     answer = fix_math(
                         ask_model(
                             [{"role": "system", "content": system_text + extra}]
