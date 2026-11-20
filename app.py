@@ -195,39 +195,17 @@ const text = __TEXT__;
 function speakNow() {
   const s = window.speechSynthesis;
   if (!s) { return; }
-  s.cancel();
+  if (s.speaking || s.pending) { s.cancel(); }
   const isUrdu = /[\u0600-\u06FF]/.test(text);
   const lang = isUrdu ? "ur-PK" : "en-US";
-  const prefix = lang.slice(0, 2);
-  let voice = null;
-  const voices = s.getVoices();
-  for (const v of voices) {
-    if (v.lang.toLowerCase().startsWith(prefix)) { voice = v; break; }
-  }
   const parts = text.match(/[^.!?\u06D4\u061F\n]+[.!?\u06D4\u061F]*/g) || [text];
   for (const part of parts) {
     const t = part.trim();
     if (!t) { continue; }
     const u = new SpeechSynthesisUtterance(t);
     u.lang = lang;
-    if (voice) { u.voice = voice; }
-    u.rate = 1.0;
+    u.rate = 1.05;
     s.speak(u);
-  }
-}
-
-function start() {
-  const s = window.speechSynthesis;
-  if (!s) { return; }
-  if (s.getVoices().length === 0) {
-    let done = false;
-    const go = function () {
-      if (!done) { done = true; speakNow(); }
-    };
-    s.onvoiceschanged = go;
-    setTimeout(go, 400);
-  } else {
-    speakNow();
   }
 }
 
@@ -235,7 +213,7 @@ document.getElementById("listen").onclick = speakNow;
 document.getElementById("stop").onclick = function () {
   if (window.speechSynthesis) { window.speechSynthesis.cancel(); }
 };
-start();
+speakNow();
 </script>
 """
 
@@ -351,19 +329,29 @@ if prompt:
     recent = st.session_state.messages[-MAX_HISTORY:]
 
     with st.chat_message("assistant", avatar=BOT_AVATAR):
-        with st.spinner("Thinking..."):
-            try:
-                response = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[{"role": "system", "content": system_text}] + recent,
-                )
-                answer = response.choices[0].message.content
-                st.markdown(answer)
-                if speak_on:
+        text_box = st.container()
+        speak_box = st.container()
+        answer = None
+
+        with text_box:
+            with st.spinner("Thinking..."):
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL_NAME,
+                        messages=[{"role": "system", "content": system_text}]
+                        + recent,
+                    )
+                    answer = response.choices[0].message.content or ""
+                except Exception as error:
+                    st.session_state.messages.pop()
+                    st.error("Error: " + str(error))
+
+        if answer is not None:
+            if speak_on and answer.strip():
+                with speak_box:
                     components.html(speak_html(answer), height=48)
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": answer}
-                )
-            except Exception as error:
-                st.session_state.messages.pop()
-                st.error("Error: " + str(error))
+            with text_box:
+                st.markdown(answer)
+            st.session_state.messages.append(
+                {"role": "assistant", "content": answer}
+            )
