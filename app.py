@@ -3,6 +3,7 @@ from datetime import date
 import json
 import os
 import re
+import urllib.parse
 import urllib.request
 
 from openai import OpenAI
@@ -337,8 +338,11 @@ def youtube_title(video_id):
         return ""
 
 
-def youtube_transcript(video_id):
-    """Returns (text, error)."""
+SUPADATA_KEY = st.secrets.get("SUPADATA_API_KEY")
+
+
+def library_transcript(video_id):
+    """Free method. Often blocked on cloud servers. Returns (text, error)."""
     langs = ["ur", "hi", "en"]
     try:
         api = YouTubeTranscriptApi()
@@ -352,15 +356,47 @@ def youtube_transcript(video_id):
         else:
             data = YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
             text = " ".join(d["text"] for d in data)
+        return text, ""
     except Exception as error:
-        return "", str(error)[:200]
+        return "", str(error).strip()[:80]
+
+
+def supadata_transcript(video_id):
+    """Backup method through Supadata. Returns (text, error)."""
+    if not SUPADATA_KEY:
+        return "", "SUPADATA_API_KEY Secrets میں نہیں ملی"
+    try:
+        link = "https://www.youtube.com/watch?v=" + video_id
+        url = (
+            "https://api.supadata.ai/v1/transcript?url="
+            + urllib.parse.quote(link, safe="")
+            + "&mode=native"
+        )
+        req = urllib.request.Request(url, headers={"x-api-key": SUPADATA_KEY})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except Exception as error:
+        return "", str(error)[:150]
+    content = data.get("content", "")
+    if isinstance(content, list):
+        content = " ".join(seg.get("text", "") for seg in content)
+    if not content:
+        return "", "Supadata کو کیپشنز نہیں ملے"
+    return content, ""
+
+
+def youtube_transcript(video_id):
+    """Returns (text, error). Tries the free method first, then Supadata."""
+    text, err = library_transcript(video_id)
+    if not text:
+        text, err2 = supadata_transcript(video_id)
+        if not text:
+            return "", err + " | Supadata: " + err2
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return "", "ویڈیو میں کیپشنز نہیں ملے"
     if len(text) > MAX_VIDEO_CHARS:
-        head = text[:6000]
-        tail = text[-3000:]
-        text = head + " [...video trimmed...] " + tail
+        text = text[:6000] + " [...video trimmed...] " + text[-3000:]
     return text, ""
 
 
