@@ -453,7 +453,7 @@ else:
 for message in st.session_state.messages:
     show_message(message["role"], message["content"])
 
-prompt = st.chat_input("Type your question", accept_audio=True)
+prompt = st.chat_input("Ask Quantum", accept_audio=True)
 
 if prompt:
     user_text = prompt.text or ""
