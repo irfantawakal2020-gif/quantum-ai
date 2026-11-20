@@ -2,3 +2,4 @@ streamlit
 openai
 pypdf
 tavily-python
+youtube-transcript-api
