@@ -417,7 +417,8 @@ def supadata_transcript(video_id):
     if isinstance(content, list):
         content = " ".join(seg.get("text", "") for seg in content)
     if not content:
-        return "", "Supadata کو کیپشنز نہیں ملے"
+        raw = json.dumps(data, ensure_ascii=False)[:150]
+        return "", "Supadata نے خالی جواب دیا: " + raw
     return content, ""
 
 
