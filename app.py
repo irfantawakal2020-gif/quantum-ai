@@ -16,8 +16,9 @@ import streamlit.components.v1 as components
 
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
+SMALL_MODEL = "llama-3.1-8b-instant"
 LOGO_FILE = "logo.png"
-MAX_HISTORY = 20
+MAX_HISTORY = 12
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
@@ -265,7 +266,7 @@ def make_search_query(history):
     """Ask the model if a web search is needed. Returns an English query or ''."""
     convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-4:])
     try:
-        text = ask_model(
+        text = ask_small(
             [
                 {
                     "role": "system",
@@ -291,7 +292,11 @@ def make_search_query(history):
     except Exception:
         return ""
     query = (text or "").strip().strip('"').strip()
-    if not query or query.upper().rstrip(".") == "NO":
+    if (
+        not query
+        or query.upper().rstrip(".!") == "NO"
+        or re.match(r"(?i)no\s*[.,:;!\-(]", query)
+    ):
         return ""
     return query[:200]
 
@@ -303,7 +308,7 @@ def web_context(query):
         res = tavily.search(
             query=query,
             search_depth="advanced",
-            max_results=5,
+            max_results=4,
             include_answer=True,
         )
         parts = []
@@ -312,7 +317,7 @@ def web_context(query):
         for r in res.get("results", []):
             parts.append(
                 "- " + r.get("title", "") + " (" + r.get("url", "") + "): "
-                + r.get("content", "")[:600]
+                + r.get("content", "")[:400]
             )
         return "\n".join(parts), ""
     except Exception as error:
@@ -324,9 +329,9 @@ YT_PATTERN = re.compile(
     r"(?:youtube\.com/(?:watch\?(?:[^\s]*&)?v=|shorts/|embed/|live/)|youtu\.be/)"
     r"([A-Za-z0-9_-]{11})"
 )
-DIRECT_LIMIT = 9000
-CHUNK_SIZE = 6000
-MAX_CHUNKS = 10
+DIRECT_LIMIT = 5000
+CHUNK_SIZE = 4000
+MAX_CHUNKS = 8
 
 
 def find_youtube_id(text):
@@ -424,9 +429,9 @@ def supadata_transcript(video_id):
 
 def summarize_chunk(chunk, number, total):
     """Detailed notes for one part of a long transcript."""
-    for attempt in range(2):
+    for attempt in range(3):
         try:
-            return ask_model(
+            return ask_small(
                 [
                     {
                         "role": "system",
@@ -437,14 +442,14 @@ def summarize_chunk(chunk, number, total):
                             "part: topics, names, numbers, steps, claims and "
                             "examples. Write in the SAME language and script as the "
                             "transcript (if it is Hindi/Devanagari, use Urdu "
-                            "script). Maximum 180 words. Output only the notes."
+                            "script). Maximum 100 words. Output only the notes."
                         ),
                     },
                     {"role": "user", "content": chunk},
                 ]
             ).strip()
         except Exception:
-            time.sleep(8)
+            time.sleep(15)
     return ""
 
 
@@ -460,9 +465,9 @@ def condense_transcript(text):
         note = summarize_chunk(chunk, number, len(chunks))
         if note:
             notes.append("Part " + str(number) + "/" + str(len(chunks)) + ": " + note)
-        time.sleep(1)
+        time.sleep(6)
     if not notes:
-        return text[:6000] + " [...video trimmed...] " + text[-3000:]
+        return text[:3500] + " [...video trimmed...] " + text[-1500:]
     result = "\n".join(notes)
     if len(text) > len(chunks) * CHUNK_SIZE:
         result += "\n(Only the first part of this very long video was covered.)"
@@ -614,6 +619,17 @@ def ask_model(messages):
             model=MODEL_NAME,
             messages=messages,
         )
+    return result.choices[0].message.content or ""
+
+
+def ask_small(messages, max_tokens=400):
+    """Small, cheap model for helper jobs. Its Groq limit is separate."""
+    result = client.chat.completions.create(
+        model=SMALL_MODEL,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=0.2,
+    )
     return result.choices[0].message.content or ""
 
 
@@ -792,7 +808,14 @@ if prompt:
                     )
                 except Exception as error:
                     st.session_state.messages.pop()
-                    st.error("Error: " + str(error))
+                    msg = str(error)
+                    if "429" in msg or "rate limit" in msg.lower():
+                        st.error(
+                            "⏳ Groq کی مفت حد (روزانہ یا فی منٹ) پوری ہو گئی ہے۔ "
+                            "کچھ دیر بعد دوبارہ کوشش کریں۔"
+                        )
+                    else:
+                        st.error("Error: " + msg)
 
         if answer is not None:
             if speak_on and answer.strip():
