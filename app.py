@@ -3,6 +3,8 @@ from datetime import date
 import json
 import os
 import re
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -168,6 +170,10 @@ mic_choice = st.radio(
 )
 
 speak_on = st.toggle("🔊 Read answers aloud", value=False)
+ai_on = st.toggle(
+    "🎙️ AI transcript for videos without captions (uses Supadata credits)",
+    value=True,
+)
 
 UNLOCK_HTML = r"""
 <script>
@@ -318,7 +324,9 @@ YT_PATTERN = re.compile(
     r"(?:youtube\.com/(?:watch\?(?:[^\s]*&)?v=|shorts/|embed/|live/)|youtu\.be/)"
     r"([A-Za-z0-9_-]{11})"
 )
-MAX_VIDEO_CHARS = 9000
+DIRECT_LIMIT = 9000
+CHUNK_SIZE = 6000
+MAX_CHUNKS = 10
 
 
 def find_youtube_id(text):
@@ -339,6 +347,7 @@ def youtube_title(video_id):
 
 
 SUPADATA_KEY = st.secrets.get("SUPADATA_API_KEY")
+SUPADATA_URL = "https://api.supadata.ai/v1/transcript"
 
 
 def library_transcript(video_id):
@@ -361,23 +370,50 @@ def library_transcript(video_id):
         return "", str(error).strip()[:80]
 
 
+def supadata_poll(job_id):
+    """Waits for a long (async) Supadata job. Returns (data, error)."""
+    headers = {"x-api-key": SUPADATA_KEY}
+    deadline = time.time() + 150
+    while time.time() < deadline:
+        time.sleep(4)
+        req = urllib.request.Request(SUPADATA_URL + "/" + job_id, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        status = data.get("status")
+        if status == "completed":
+            return data, ""
+        if status == "failed":
+            return None, "Supadata job failed: " + str(data.get("error"))[:100]
+    return None, "ویڈیو بہت لمبی ہے، پروسیسنگ وقت پر مکمل نہیں ہوئی"
+
+
 def supadata_transcript(video_id):
     """Backup method through Supadata. Returns (text, error)."""
     if not SUPADATA_KEY:
         return "", "SUPADATA_API_KEY Secrets میں نہیں ملی"
+    mode = "auto" if ai_on else "native"
     try:
         link = "https://www.youtube.com/watch?v=" + video_id
         url = (
-            "https://api.supadata.ai/v1/transcript?url="
-            + urllib.parse.quote(link, safe="")
-            + "&mode=auto"
+            SUPADATA_URL + "?url=" + urllib.parse.quote(link, safe="")
+            + "&text=true&mode=" + mode
         )
         req = urllib.request.Request(url, headers={"x-api-key": SUPADATA_KEY})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=60) as r:
             data = json.loads(r.read().decode("utf-8"))
+        if data.get("jobId") and not data.get("content"):
+            data, err = supadata_poll(data["jobId"])
+            if data is None:
+                return "", err
+    except urllib.error.HTTPError as error:
+        try:
+            body = error.read().decode("utf-8")[:150]
+        except Exception:
+            body = ""
+        return "", "HTTP " + str(error.code) + " " + body
     except Exception as error:
         return "", str(error)[:150]
-    content = data.get("content", "")
+    content = data.get("content") or (data.get("result") or {}).get("content") or ""
     if isinstance(content, list):
         content = " ".join(seg.get("text", "") for seg in content)
     if not content:
@@ -385,8 +421,55 @@ def supadata_transcript(video_id):
     return content, ""
 
 
+def summarize_chunk(chunk, number, total):
+    """Detailed notes for one part of a long transcript."""
+    for attempt in range(2):
+        try:
+            return ask_model(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are given part " + str(number) + " of " + str(total)
+                            + " of a YouTube video transcript. Write detailed "
+                            "bullet-point notes of everything important in this "
+                            "part: topics, names, numbers, steps, claims and "
+                            "examples. Write in the SAME language and script as the "
+                            "transcript (if it is Hindi/Devanagari, use Urdu "
+                            "script). Maximum 180 words. Output only the notes."
+                        ),
+                    },
+                    {"role": "user", "content": chunk},
+                ]
+            ).strip()
+        except Exception:
+            time.sleep(8)
+    return ""
+
+
+def condense_transcript(text):
+    """Short transcripts are used as they are. Long ones become detailed notes."""
+    if len(text) <= DIRECT_LIMIT:
+        return text
+    chunks = [
+        text[i:i + CHUNK_SIZE] for i in range(0, len(text), CHUNK_SIZE)
+    ][:MAX_CHUNKS]
+    notes = []
+    for number, chunk in enumerate(chunks, 1):
+        note = summarize_chunk(chunk, number, len(chunks))
+        if note:
+            notes.append("Part " + str(number) + "/" + str(len(chunks)) + ": " + note)
+        time.sleep(1)
+    if not notes:
+        return text[:6000] + " [...video trimmed...] " + text[-3000:]
+    result = "\n".join(notes)
+    if len(text) > len(chunks) * CHUNK_SIZE:
+        result += "\n(Only the first part of this very long video was covered.)"
+    return result
+
+
 def youtube_transcript(video_id):
-    """Returns (text, error). Tries the free method first, then Supadata."""
+    """Returns (text, error). Free method first, then Supadata."""
     text, err = library_transcript(video_id)
     if not text:
         text, err2 = supadata_transcript(video_id)
@@ -395,9 +478,7 @@ def youtube_transcript(video_id):
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return "", "ویڈیو میں کیپشنز نہیں ملے"
-    if len(text) > MAX_VIDEO_CHARS:
-        text = text[:6000] + " [...video trimmed...] " + text[-3000:]
-    return text, ""
+    return condense_transcript(text), ""
 
 
 USER_AVATAR = "🧑‍💻"
@@ -686,9 +767,13 @@ if prompt:
                             + st.session_state.get("video_title", "")
                             + "):\n" + st.session_state.video_text
                             + "\n\nThe user is asking about this video. Answer "
-                            "from the transcript. If the transcript does not "
-                            "contain the answer, say so. Long videos may be "
-                            "trimmed in the middle."
+                            "from the transcript and give full details: main "
+                            "points in order, names, numbers, steps and examples. "
+                            "If the user shared only the link without a question, "
+                            "give a detailed summary. If the transcript does not "
+                            "contain the answer, say so. Do not invent things. "
+                            "For very long videos the transcript may be condensed "
+                            "notes or only partial."
                         )
                     elif vid:
                         extra += (
