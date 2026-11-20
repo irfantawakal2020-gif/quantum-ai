@@ -68,10 +68,26 @@ footer { visibility: hidden; }
     background: rgba(120, 70, 255, 0.08);
 }
 [data-testid="stChatMessage"] {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(160, 110, 255, 0.2);
-    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(160, 110, 255, 0.22);
+    border-radius: 20px 20px 20px 6px;
     padding: 0.8rem 1rem;
+    max-width: 92%;
+    margin-right: auto;
+}
+[data-testid="stChatMessage"]:has(.qa-u) {
+    flex-direction: row-reverse;
+    width: fit-content;
+    max-width: 85%;
+    margin-left: auto;
+    margin-right: 0;
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.5), rgba(76, 29, 149, 0.4));
+    border: 1px solid rgba(167, 139, 250, 0.55);
+    border-radius: 20px 20px 6px 20px;
+}
+[data-testid="stElementContainer"]:has(.qa-u),
+.element-container:has(.qa-u) {
+    display: none;
 }
 [data-testid="stBottom"],
 [data-testid="stBottom"] > div {
@@ -355,6 +371,7 @@ def show_message(role, text):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
+            st.markdown('<span class="qa-u"></span>', unsafe_allow_html=True)
             for line in text.split("\n"):
                 if line.strip():
                     safe_line = line.replace("]", "\\]")
