@@ -79,11 +79,19 @@ footer { visibility: hidden; }
 }
 [data-testid="stChatInput"] {
     border: 1px solid #8b5cf6;
-    border-radius: 20px;
+    border-radius: 32px !important;
     box-shadow:
         0 0 10px 2px rgba(109, 40, 217, 0.55),
         0 0 28px 6px rgba(76, 29, 149, 0.45);
     animation: qaGlow 3s ease-in-out infinite;
+}
+[data-testid="stChatInput"] > div,
+[data-testid="stChatInput"] > div > div {
+    border-radius: 32px !important;
+}
+[data-testid="stChatInput"] textarea {
+    border-radius: 32px !important;
+    padding-left: 1.4rem !important;
 }
 [data-testid="stChatInput"]:focus-within {
     animation: none;
