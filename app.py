@@ -89,6 +89,12 @@ footer { visibility: hidden; }
 .element-container:has(.qa-u) {
     display: none;
 }
+.katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.3rem 0;
+}
+.katex { font-size: 1.08em; }
 [data-testid="stBottom"],
 [data-testid="stBottom"] > div {
     background: transparent !important;
@@ -186,6 +192,17 @@ if speak_on:
 
 today = date.today().strftime("%A, %d %B %Y")
 
+MATH_RULES = (
+    r"For any math, physics or chemistry formula, write it in LaTeX. "
+    r"Use $...$ for inline formulas and put display equations on their own lines "
+    r"inside $$...$$. Never use \( \) or \[ \] delimiters. "
+    r"Never use the dollar sign for money; write Rs or USD instead. "
+    r"Write chemical formulas like $\mathrm{H_2SO_4}$ and reactions with \rightarrow, "
+    r"and do not use \ce. "
+    r"For math, physics and chemistry problems, solve step by step "
+    r"and give the final answer clearly. "
+)
+
 system_text = (
     "You are a friendly AI chatbot named Quantum AI. "
     "Your name is Quantum AI. If anyone asks your name, always say your name is Quantum AI. "
@@ -205,9 +222,10 @@ system_text = (
     "reply in Urdu script and never use Devanagari. "
     "Never mix scripts in one reply. "
     "Never reply in any language other than English, Urdu or Roman Urdu. "
-    "Keep answers short and to the point, about 2 to 5 sentences, "
+    "Keep normal answers short and to the point, about 2 to 5 sentences, "
     "unless the user asks for details. "
-    "Keep answers simple and polite."
+    "Keep answers simple and polite. "
+    + MATH_RULES
 )
 
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GROK_API_KEY")
@@ -295,10 +313,28 @@ if (synth && (synth.speaking || synth.pending)) {
 
 
 def speak_html(text):
-    clean = re.sub(r"[*#`_>~\[\]]", "", text)
+    clean = re.sub(r"\$\$.*?\$\$", " ", text, flags=re.S)
+    clean = re.sub(r"\$[^$]*\$", " ", clean)
+    clean = re.sub(r"[*#`_>~\[\]]", "", clean)
     clean = clean[:2500]
     payload = json.dumps(clean).replace("</", "<\\/")
     return SPEAK_TEMPLATE.replace("__TEXT__", payload)
+
+
+def fix_math(text):
+    text = re.sub(
+        r"\\\[(.+?)\\\]",
+        lambda m: "\n\n$$" + m.group(1).strip() + "$$\n\n",
+        text,
+        flags=re.S,
+    )
+    text = re.sub(
+        r"\\\((.+?)\\\)",
+        lambda m: "$" + m.group(1).strip() + "$",
+        text,
+        flags=re.S,
+    )
+    return text
 
 
 def ask_model(messages):
@@ -430,8 +466,10 @@ if prompt:
         with text_box:
             with st.spinner("Thinking..."):
                 try:
-                    answer = ask_model(
-                        [{"role": "system", "content": system_text}] + recent
+                    answer = fix_math(
+                        ask_model(
+                            [{"role": "system", "content": system_text}] + recent
+                        )
                     )
                 except Exception as error:
                     st.session_state.messages.pop()
