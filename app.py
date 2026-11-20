@@ -605,7 +605,7 @@ def fix_math(text):
     return text.strip()
 
 
-def ask_model(messages):
+def ask_once(messages):
     try:
         result = client.chat.completions.create(
             model=MODEL_NAME,
@@ -620,6 +620,29 @@ def ask_model(messages):
             messages=messages,
         )
     return result.choices[0].message.content or ""
+
+
+def rate_limit_wait(error):
+    """Seconds Groq asks us to wait, or None if it is not a rate-limit error."""
+    msg = str(error)
+    if "429" not in msg:
+        return None
+    found = re.search(r"try again in (?:(\d+)m)?(\d+(?:\.\d+)?)s", msg)
+    if not found:
+        return None
+    return int(found.group(1) or 0) * 60 + float(found.group(2))
+
+
+def ask_model(messages):
+    """Like ask_once, but waits and retries once on a short rate limit."""
+    try:
+        return ask_once(messages)
+    except Exception as error:
+        wait = rate_limit_wait(error)
+        if wait is None or wait > 40:
+            raise
+        time.sleep(wait + 1)
+        return ask_once(messages)
 
 
 def ask_small(messages, max_tokens=400):
@@ -810,9 +833,22 @@ if prompt:
                     st.session_state.messages.pop()
                     msg = str(error)
                     if "429" in msg or "rate limit" in msg.lower():
+                        if "(TPD)" in msg:
+                            kind = "روزانہ"
+                        elif "(TPM)" in msg:
+                            kind = "فی منٹ"
+                        else:
+                            kind = "روزانہ یا فی منٹ"
+                        wait = rate_limit_wait(error)
+                        if wait is None:
+                            when = "کچھ دیر"
+                        elif wait >= 60:
+                            when = "تقریباً " + str(int(wait // 60) + 1) + " منٹ"
+                        else:
+                            when = "تقریباً " + str(int(wait) + 1) + " سیکنڈ"
                         st.error(
-                            "⏳ Groq کی مفت حد (روزانہ یا فی منٹ) پوری ہو گئی ہے۔ "
-                            "کچھ دیر بعد دوبارہ کوشش کریں۔"
+                            "⏳ Groq کی " + kind + " مفت حد پوری ہو گئی ہے۔ "
+                            + when + " بعد دوبارہ کوشش کریں۔"
                         )
                     else:
                         st.error("Error: " + msg)
