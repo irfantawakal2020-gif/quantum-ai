@@ -164,6 +164,8 @@ system_text = (
     "reply in Urdu script and never use Devanagari. "
     "Never mix scripts in one reply. "
     "Never reply in any language other than English, Urdu or Roman Urdu. "
+    "Keep answers short and to the point, about 2 to 5 sentences, "
+    "unless the user asks for details. "
     "Keep answers simple and polite."
 )
 
@@ -204,7 +206,7 @@ function speakNow() {
     if (!t) { continue; }
     const u = new SpeechSynthesisUtterance(t);
     u.lang = lang;
-    u.rate = 1.05;
+    u.rate = 1.1;
     s.speak(u);
   }
 }
@@ -223,6 +225,23 @@ def speak_html(text):
     clean = clean[:2500]
     payload = json.dumps(clean).replace("</", "<\\/")
     return SPEAK_TEMPLATE.replace("__TEXT__", payload)
+
+
+def ask_model(messages):
+    try:
+        result = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            extra_body={"reasoning_effort": "low"},
+        )
+    except Exception as error:
+        if "reasoning" not in str(error).lower():
+            raise
+        result = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+        )
+    return result.choices[0].message.content or ""
 
 
 def has_devanagari(text):
@@ -336,12 +355,9 @@ if prompt:
         with text_box:
             with st.spinner("Thinking..."):
                 try:
-                    response = client.chat.completions.create(
-                        model=MODEL_NAME,
-                        messages=[{"role": "system", "content": system_text}]
-                        + recent,
+                    answer = ask_model(
+                        [{"role": "system", "content": system_text}] + recent
                     )
-                    answer = response.choices[0].message.content or ""
                 except Exception as error:
                     st.session_state.messages.pop()
                     st.error("Error: " + str(error))
