@@ -370,7 +370,7 @@ def supadata_transcript(video_id):
         url = (
             "https://api.supadata.ai/v1/transcript?url="
             + urllib.parse.quote(link, safe="")
-            + "&mode=native"
+            + "&mode=auto"
         )
         req = urllib.request.Request(url, headers={"x-api-key": SUPADATA_KEY})
         with urllib.request.urlopen(req, timeout=30) as r:
