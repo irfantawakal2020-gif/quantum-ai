@@ -143,6 +143,31 @@ mic_choice = st.radio(
 
 speak_on = st.toggle("🔊 Read answers aloud", value=False)
 
+UNLOCK_HTML = r"""
+<script>
+try {
+  const W = window.parent;
+  const synth = W.speechSynthesis;
+  if (synth && !W.__qaUnlock) {
+    W.__qaUnlock = true;
+    const unlock = function () {
+      try {
+        if (synth.speaking || synth.pending) { return; }
+        const u = new W.SpeechSynthesisUtterance(" ");
+        u.volume = 0;
+        synth.speak(u);
+      } catch (e) {}
+    };
+    W.document.addEventListener("click", unlock, true);
+    W.document.addEventListener("touchend", unlock, true);
+  }
+} catch (e) {}
+</script>
+"""
+
+if speak_on:
+    components.html(UNLOCK_HTML, height=0)
+
 today = date.today().strftime("%A, %d %B %Y")
 
 system_text = (
@@ -190,32 +215,65 @@ SPEAK_TEMPLATE = r"""
   <button id="stop" style="background:#3b2a6b;color:#fff;border:none;
     border-radius:20px;padding:6px 14px;cursor:pointer;">
     ⏹ Stop</button>
+  <span id="hint" style="color:#cfc2f5;font-size:12px;margin-left:6px;"></span>
 </div>
 <script>
 const text = __TEXT__;
+let host = window;
+try {
+  if (window.parent && window.parent.speechSynthesis) { host = window.parent; }
+} catch (e) { host = window; }
+const synth = host.speechSynthesis;
+const Utter = host.SpeechSynthesisUtterance;
+const hint = document.getElementById("hint");
+let started = false;
+
+function pickVoice(lang) {
+  const voices = synth.getVoices() || [];
+  const prefix = lang.slice(0, 2).toLowerCase();
+  for (const v of voices) {
+    const vl = (v.lang || "").toLowerCase().replace("_", "-");
+    if (vl.startsWith(prefix)) { return v; }
+  }
+  return null;
+}
 
 function speakNow() {
-  const s = window.speechSynthesis;
-  if (!s) { return; }
-  if (s.speaking || s.pending) { s.cancel(); }
+  if (!synth || !Utter) { hint.textContent = "Speech not supported"; return; }
+  started = false;
   const isUrdu = /[\u0600-\u06FF]/.test(text);
   const lang = isUrdu ? "ur-PK" : "en-US";
+  const voice = pickVoice(lang);
   const parts = text.match(/[^.!?\u06D4\u061F\n]+[.!?\u06D4\u061F]*/g) || [text];
   for (const part of parts) {
     const t = part.trim();
     if (!t) { continue; }
-    const u = new SpeechSynthesisUtterance(t);
+    const u = new Utter(t);
     u.lang = lang;
+    if (voice) { u.voice = voice; }
     u.rate = 1.1;
-    s.speak(u);
+    u.onstart = function () { started = true; hint.textContent = ""; };
+    synth.speak(u);
   }
+  setTimeout(function () {
+    if (!started) { hint.textContent = "No sound? Tap Listen."; }
+  }, 2500);
 }
 
-document.getElementById("listen").onclick = speakNow;
-document.getElementById("stop").onclick = function () {
-  if (window.speechSynthesis) { window.speechSynthesis.cancel(); }
+document.getElementById("listen").onclick = function () {
+  if (synth) { synth.cancel(); }
+  setTimeout(speakNow, 150);
 };
-speakNow();
+document.getElementById("stop").onclick = function () {
+  if (synth) { synth.cancel(); }
+};
+
+if (synth && (synth.speaking || synth.pending)) {
+  synth.cancel();
+  setTimeout(speakNow, 150);
+} else {
+  setTimeout(speakNow, 250);
+}
 </script>
 """
 
