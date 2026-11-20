@@ -1,9 +1,12 @@
 import base64
 from datetime import date
+import json
 import os
+import re
 
 from openai import OpenAI
 import streamlit as st
+import streamlit.components.v1 as components
 
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
@@ -138,6 +141,8 @@ mic_choice = st.radio(
     horizontal=True,
 )
 
+speak_on = st.toggle("🔊 Read answers aloud", value=False)
+
 today = date.today().strftime("%A, %d %B %Y")
 
 system_text = (
@@ -174,6 +179,47 @@ BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+SPEAK_TEMPLATE = """
+<div style="font-family: sans-serif;">
+  <button id="listen" style="background:#6d28d9;color:#fff;border:none;
+    border-radius:20px;padding:6px 14px;cursor:pointer;margin-right:6px;">
+    🔊 Listen</button>
+  <button id="stop" style="background:#3b2a6b;color:#fff;border:none;
+    border-radius:20px;padding:6px 14px;cursor:pointer;">
+    ⏹ Stop</button>
+</div>
+<script>
+const text = __TEXT__;
+function speak() {
+  const s = window.speechSynthesis;
+  if (!s) { return; }
+  s.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  const isUrdu = /[\\u0600-\\u06FF]/.test(text);
+  u.lang = isUrdu ? "ur-PK" : "en-US";
+  const voices = s.getVoices();
+  const prefix = u.lang.slice(0, 2).toLowerCase();
+  for (const v of voices) {
+    if (v.lang.toLowerCase().startsWith(prefix)) { u.voice = v; break; }
+  }
+  u.rate = 0.95;
+  s.speak(u);
+}
+document.getElementById("listen").onclick = speak;
+document.getElementById("stop").onclick = function () {
+  if (window.speechSynthesis) { window.speechSynthesis.cancel(); }
+};
+setTimeout(speak, 300);
+</script>
+"""
+
+
+def speak_html(text):
+    clean = re.sub(r"[*#`_>~\[\]]", "", text)
+    clean = clean[:2500]
+    payload = json.dumps(clean).replace("</", "<\\/")
+    return SPEAK_TEMPLATE.replace("__TEXT__", payload)
 
 
 def has_devanagari(text):
@@ -288,6 +334,8 @@ if prompt:
                 )
                 answer = response.choices[0].message.content
                 st.markdown(answer)
+                if speak_on:
+                    components.html(speak_html(answer), height=48)
                 st.session_state.messages.append(
                     {"role": "assistant", "content": answer}
                 )
