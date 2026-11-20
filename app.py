@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
 LOGO_FILE = "logo.png"
-MAX_HISTORY = 12
+MAX_HISTORY = 30
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
