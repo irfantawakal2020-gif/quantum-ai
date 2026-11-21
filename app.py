@@ -682,10 +682,11 @@ def fix_math(text):
     return text.strip()
 
 
-def ask_once(messages):
+def ask_once(messages, model=None):
+    model = model or MODEL_NAME
     try:
         result = client.chat.completions.create(
-            model=MODEL_NAME,
+            model=model,
             messages=messages,
             extra_body={"reasoning_effort": "low"},
         )
@@ -693,7 +694,7 @@ def ask_once(messages):
         if "reasoning" not in str(error).lower():
             raise
         result = client.chat.completions.create(
-            model=MODEL_NAME,
+            model=model,
             messages=messages,
         )
     return result.choices[0].message.content or ""
@@ -711,15 +712,18 @@ def rate_limit_wait(error):
 
 
 def ask_model(messages):
-    """Like ask_once, but waits and retries once on a short rate limit."""
+    """Main model. Short rate limit: wait and retry. Daily limit: backup model."""
     try:
         return ask_once(messages)
     except Exception as error:
         wait = rate_limit_wait(error)
-        if wait is None or wait > 40:
+        if wait is None:
             raise
-        time.sleep(wait + 1)
-        return ask_once(messages)
+        if wait <= 40:
+            time.sleep(wait + 1)
+            return ask_once(messages)
+        st.session_state.used_backup = True
+        return ask_once(messages, SMALL_MODEL)
 
 
 def ask_small(messages, max_tokens=600):
@@ -936,6 +940,10 @@ if prompt:
                             raise
                         answer = attempt(2500, 1200)
                         search_note = (search_note + "  ✂️ Context shortened").strip()
+                    if st.session_state.pop("used_backup", False):
+                        search_note = (
+                            search_note + "  ↪️ Backup model (main daily limit reached)"
+                        ).strip()
                 except Exception as error:
                     st.session_state.messages.pop()
                     msg = str(error)
