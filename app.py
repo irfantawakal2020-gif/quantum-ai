@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -143,25 +144,6 @@ footer { visibility: hidden; }
             0 0 38px 9px rgba(91, 33, 182, 0.55);
     }
 }
-[data-testid="stChatInput"] button {
-    border-radius: 50% !important;
-    width: 38px !important;
-    height: 38px !important;
-    min-width: 38px !important;
-    padding: 0 !important;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-[data-testid="stChatInputSubmitButton"] {
-    background: linear-gradient(135deg, #8b5cf6, #5b21b6) !important;
-    color: #fff !important;
-    box-shadow: 0 0 12px rgba(139, 92, 246, 0.6);
-}
-[data-testid="stChatInputSubmitButton"]:disabled {
-    background: rgba(255, 255, 255, 0.12) !important;
-    box-shadow: none;
-}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -294,11 +276,7 @@ SEARCH_WORDS = [
 
 def needs_search(text):
     low = (text or "").lower()
-    for word in SEARCH_WORDS:
-        pattern = r"(?<![a-z])" + re.escape(word) + r"s?(?![a-z])"
-        if re.search(pattern, low):
-            return True
-    return False
+    return any(word in low for word in SEARCH_WORDS)
 
 
 def make_search_query(history):
@@ -456,7 +434,7 @@ def supadata_transcript(video_id):
         with urllib.request.urlopen(req, timeout=60) as r:
             data = json.loads(r.read().decode("utf-8"))
         if data.get("jobId") and not data.get("content"):
-            data, err = supadata_poll(data["jobId"])
+            data, err = supadata_poll(data["jobId"]) or (None, "poll returned nothing")
             if data is None:
                 return "", err
     except urllib.error.HTTPError as error:
@@ -525,16 +503,17 @@ def condense_transcript(text):
 
 def youtube_transcript(video_id):
     """Returns (text, error). Free method first, then Supadata."""
-    text, err = library_transcript(video_id)
+    text, err = library_transcript(video_id) or ("", "library returned nothing")
     if not text:
-        text, err2 = supadata_transcript(video_id)
+        text, err2 = supadata_transcript(video_id) or ("", "supadata returned nothing")
         if not text:
             return "", err + " | Supadata: " + err2
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return "", "ویڈیو میں کیپشنز نہیں ملے"
-        return condense_transcript(text), ""
-    
+    return condense_transcript(text), ""
+
+
 USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
@@ -840,7 +819,7 @@ if prompt:
                     if vid and vid != st.session_state.get("video_id"):
                         for key in ("video_id", "video_text", "video_title"):
                             st.session_state.pop(key, None)
-                        transcript, yt_err = youtube_transcript(vid)
+                        transcript, yt_err = youtube_transcript(vid) or ("", "no result returned")
                         if transcript:
                             st.session_state.video_id = vid
                             st.session_state.video_text = transcript
@@ -851,9 +830,11 @@ if prompt:
                     if vid:
                         query, qwarn = "", ""
                     else:
-                        query, qwarn = make_search_query(st.session_state.messages)
+                        query, qwarn = make_search_query(st.session_state.messages) or (
+                            "", "⚠️ search check returned nothing"
+                        )
                     if query:
-                        info, err = web_context(query)
+                        info, err = web_context(query) or ("", "no result returned")
                         if info:
                             search_note = "🔎 Web search: " + query
                             extra = (
@@ -922,6 +903,7 @@ if prompt:
                         )
                     else:
                         st.error("Error: " + msg)
+                        st.code(traceback.format_exc()[-700:])
 
         if answer is not None:
             if speak_on and answer.strip():
