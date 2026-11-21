@@ -16,7 +16,7 @@ import streamlit.components.v1 as components
 
 MODEL_NAME = "openai/gpt-oss-120b"
 AUDIO_MODEL = "whisper-large-v3"
-SMALL_MODEL = "llama-3.1-8b-instant"
+SMALL_MODEL = "openai/gpt-oss-20b"
 LOGO_FILE = "logo.png"
 MAX_HISTORY = 12
 
@@ -308,7 +308,7 @@ def make_search_query(history):
                 },
                 {"role": "user", "content": convo},
             ],
-            max_tokens=60,
+            max_tokens=300,
         )
     except Exception as error:
         if needs_search(last):
@@ -671,15 +671,30 @@ def ask_model(messages):
         return ask_once(messages)
 
 
-def ask_small(messages, max_tokens=400):
-    """Small, cheap model for helper jobs. Its Groq limit is separate."""
-    result = client.chat.completions.create(
-        model=SMALL_MODEL,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.2,
-    )
-    return result.choices[0].message.content or ""
+def ask_small(messages, max_tokens=600):
+    """Helper model for small jobs. Its Groq daily limit is separate."""
+    try:
+        try:
+            result = client.chat.completions.create(
+                model=SMALL_MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+                extra_body={"reasoning_effort": "low"},
+            )
+        except Exception as error:
+            if "reasoning" not in str(error).lower():
+                raise
+            result = client.chat.completions.create(
+                model=SMALL_MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+            )
+        return result.choices[0].message.content or ""
+    except Exception as error:
+        text = str(error).lower()
+        if "404" in text or "does not exist" in text or "decommission" in text:
+            return ask_once(messages)
+        raise
 
 
 def has_devanagari(text):
