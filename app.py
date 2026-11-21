@@ -519,6 +519,51 @@ def youtube_transcript(video_id):
     return condense_transcript(text), ""
 
 
+VIDEO_CTX_CHARS = 5500
+HISTORY_CHARS = 6000
+HISTORY_CHARS_WITH_VIDEO = 2500
+
+
+def trim_history(messages, max_chars, per_message=1500):
+    """Keeps the newest messages that fit in max_chars. Old long ones are cut."""
+    kept = []
+    total = 0
+    last_index = len(messages) - 1
+    for index in range(last_index, -1, -1):
+        content = messages[index]["content"]
+        if index != last_index and len(content) > per_message:
+            content = content[:per_message] + " ..."
+        if kept and total + len(content) > max_chars:
+            break
+        kept.append({"role": messages[index]["role"], "content": content})
+        total += len(content)
+    return list(reversed(kept))
+
+
+def video_block(limit):
+    """The video transcript text that is added to the system prompt."""
+    text = st.session_state.get("video_text", "")
+    if not text:
+        return ""
+    return (
+        "\n\nYOUTUBE VIDEO TRANSCRIPT (title: "
+        + st.session_state.get("video_title", "")
+        + "):\n" + text[:limit]
+        + "\n\nThe user is asking about this video. Answer from the transcript "
+        "and give full details: main points in order, names, numbers, steps and "
+        "examples. If the user shared only the link without a question, give a "
+        "detailed summary. If the transcript does not contain the answer, say "
+        "so. Do not invent things. For very long videos the transcript may be "
+        "condensed notes or only partial. "
+        "IMPORTANT about names: the transcript was made by automatic speech "
+        "recognition, so names of places and people may be misspelled or "
+        "misheard. Never replace a name with a different one on your own; keep "
+        "names as they appear in the transcript, and if a name looks wrong, say "
+        "it may be misheard. If the user corrects a name, use the user's "
+        "spelling in this and all later answers."
+    )
+
+
 USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
@@ -814,6 +859,7 @@ if prompt:
         speak_box = st.container()
         answer = None
         search_note = ""
+        video_note = ""
 
         with text_box:
             with st.spinner("Thinking..."):
@@ -853,21 +899,7 @@ if prompt:
                             )
                         else:
                             search_note = "⚠️ Search failed: " + (err or "no results")
-                    if st.session_state.get("video_text"):
-                        extra += (
-                            "\n\nYOUTUBE VIDEO TRANSCRIPT (title: "
-                            + st.session_state.get("video_title", "")
-                            + "):\n" + st.session_state.video_text
-                            + "\n\nThe user is asking about this video. Answer "
-                            "from the transcript and give full details: main "
-                            "points in order, names, numbers, steps and examples. "
-                            "If the user shared only the link without a question, "
-                            "give a detailed summary. If the transcript does not "
-                            "contain the answer, say so. Do not invent things. "
-                            "For very long videos the transcript may be condensed "
-                            "notes or only partial."
-                        )
-                    elif vid:
+                    if vid and not st.session_state.get("video_text"):
                         extra += (
                             "\n\nThe user shared a YouTube link but its transcript "
                             "could not be read. Do NOT guess what the video "
@@ -879,12 +911,31 @@ if prompt:
                     search_note = (
                         video_note + "  " + qwarn + "  " + search_note
                     ).strip()
-                    answer = fix_math(
-                        ask_model(
-                            [{"role": "system", "content": system_text + extra}]
-                            + recent
-                        )
+                    has_video = bool(st.session_state.get("video_text"))
+                    history_chars = (
+                        HISTORY_CHARS_WITH_VIDEO if has_video else HISTORY_CHARS
                     )
+
+                    def attempt(video_limit, hist_chars):
+                        history = trim_history(
+                            st.session_state.messages[-MAX_HISTORY:], hist_chars
+                        )
+                        system = system_text + extra + video_block(video_limit)
+                        return fix_math(
+                            ask_model([{"role": "system", "content": system}] + history)
+                        )
+
+                    try:
+                        answer = attempt(VIDEO_CTX_CHARS, history_chars)
+                    except Exception as first_error:
+                        too_big = (
+                            "413" in str(first_error)
+                            or "too large" in str(first_error).lower()
+                        )
+                        if not too_big:
+                            raise
+                        answer = attempt(2500, 1200)
+                        search_note = (search_note + "  ✂️ Context shortened").strip()
                 except Exception as error:
                     st.session_state.messages.pop()
                     msg = str(error)
@@ -918,6 +969,9 @@ if prompt:
                 st.markdown(answer)
                 if search_note:
                     st.caption(search_note)
+                if video_note.startswith("🎬") and st.session_state.get("video_text"):
+                    with st.expander("📄 Video transcript (check names here)"):
+                        st.write(st.session_state.video_text)
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer}
             )
