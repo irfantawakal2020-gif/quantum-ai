@@ -534,9 +534,7 @@ def youtube_transcript(video_id):
     if not text:
         return "", "ویڈیو میں کیپشنز نہیں ملے"
     return condense_transcript(text), ""
-
-
-USER_AVATAR = "🧑‍💻"
+    USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
 if "messages" not in st.session_state:
@@ -649,6 +647,25 @@ def fix_math(text):
     text = re.sub(
         r"(?<!\$)\$(?!\$)[ \t]*([^$\n]+?)[ \t]*(?<!\$)\$(?!\$)",
         lambda m: "$" + m.group(1) + "$",
+        text,
+    )
+    return text.strip()
+
+
+def ask_once(messages):
+    try:
+        result = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            extra_body={"reasoning_effort": "low"},
+        )
+    except Exception as error:
+        if "reasoning" not in str(error).lower():
+            raise
+        result = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+        )
     return result.choices[0].message.content or ""
 
 
@@ -684,6 +701,235 @@ def ask_small(messages, max_tokens=600):
                 messages=messages,
                 max_tokens=max_tokens,
                 extra_body={"reasoning_effort": "low"},
-            )st.session_state.messages.append(
+            )
+        except Exception as error:
+            if "reasoning" not in str(error).lower():
+                raise
+            result = client.chat.completions.create(
+                model=SMALL_MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
+            )
+        return result.choices[0].message.content or ""
+    except Exception as error:
+        text = str(error).lower()
+        if "404" in text or "does not exist" in text or "decommission" in text:
+            return ask_once(messages)
+        raise
+
+
+def has_devanagari(text):
+    for ch in text:
+        if "\u0900" <= ch <= "\u097F":
+            return True
+    return False
+
+
+def to_urdu_script(text):
+    try:
+        result = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Convert the given Hindi (Devanagari) text into Urdu script, "
+                        "keeping the same words and meaning. "
+                        "Output only the Urdu text and nothing else."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+        )
+        converted = (result.choices[0].message.content or "").strip()
+        return converted if converted else text
+    except Exception:
+        return text
+
+
+def transcribe(audio_bytes):
+    options = {}
+    code = LANG_CODES.get(mic_choice)
+    if code:
+        options["language"] = code
+    result = client.audio.transcriptions.create(
+        model=AUDIO_MODEL,
+        file=("voice.wav", audio_bytes),
+        response_format="verbose_json",
+        temperature=0,
+        prompt=HINTS.get(mic_choice, HINTS["Auto"]),
+        **options,
+    )
+    detected = (getattr(result, "language", "") or "").lower()
+    text = (result.text or "").strip()
+    if not code and detected and detected not in ALLOWED_LANGS:
+        return None
+    return text
+
+
+def show_message(role, text):
+    avatar = USER_AVATAR if role == "user" else BOT_AVATAR
+    with st.chat_message(role, avatar=avatar):
+        if role == "user":
+            st.markdown('<span class="qa-u"></span>', unsafe_allow_html=True)
+            for line in text.split("\n"):
+                if line.strip():
+                    safe_line = line.replace("]", "\\]")
+                    st.markdown(":green[" + safe_line + "]")
+        else:
+            st.markdown(text)
+
+
+if st.session_state.messages:
+    if st.button("🗑️ New chat"):
+        st.session_state.messages = []
+        for key in ("video_id", "video_text", "video_title"):
+            st.session_state.pop(key, None)
+        st.rerun()
+else:
+    st.markdown(
+        '<div class="qa-welcome">👋 Welcome!<br>'
+        "آپ اردو، رومن اردو یا انگریزی میں سوال پوچھ سکتے ہیں۔</div>",
+        unsafe_allow_html=True,
+    )
+
+for message in st.session_state.messages:
+    show_message(message["role"], message["content"])
+
+prompt = st.chat_input("Ask Quantum", accept_audio=True)
+
+if prompt:
+    user_text = prompt.text or ""
+
+    if prompt.audio:
+        try:
+            spoken = transcribe(prompt.audio.getvalue())
+            if spoken is None:
+                st.warning(
+                    "آواز کی زبان پہچانی نہیں گئی۔ اوپر Mic language میں "
+                    "English یا اردو چن کر دوبارہ بولیں۔"
+                )
+            elif spoken:
+                if has_devanagari(spoken):
+                    spoken = to_urdu_script(spoken)
+                user_text = (user_text + "\n" + spoken).strip()
+        except Exception as error:
+            st.error("Voice error: " + str(error))
+
+    if not user_text.strip():
+        st.stop()
+
+    st.session_state.messages.append({"role": "user", "content": user_text})
+    show_message("user", user_text)
+
+    recent = st.session_state.messages[-MAX_HISTORY:]
+
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
+        text_box = st.container()
+        speak_box = st.container()
+        answer = None
+        search_note = ""
+
+        with text_box:
+            with st.spinner("Thinking..."):
+                try:
+                    extra = ""
+                    video_note = ""
+                    vid = find_youtube_id(user_text)
+                    if vid and vid != st.session_state.get("video_id"):
+                        for key in ("video_id", "video_text", "video_title"):
+                            st.session_state.pop(key, None)
+                        transcript, yt_err = youtube_transcript(vid)
+                        if transcript:
+                            st.session_state.video_id = vid
+                            st.session_state.video_text = transcript
+                            st.session_state.video_title = youtube_title(vid)
+                            video_note = "🎬 YouTube transcript loaded"
+                        else:
+                            video_note = "⚠️ YouTube transcript failed: " + yt_err
+                    if vid:
+                        query, qwarn = "", ""
+                    else:
+                        query, qwarn = make_search_query(st.session_state.messages)
+                    if query:
+                        info, err = web_context(query)
+                        if info:
+                            search_note = "🔎 Web search: " + query
+                            extra = (
+                                "\n\nFRESH WEB SEARCH RESULTS (searched today, "
+                                + today + ", for: " + query + "):\n" + info
+                                + "\n\nFor current facts, answer ONLY from these "
+                                "results. Ignore your own memory and ignore any "
+                                "earlier answers in this chat that disagree with "
+                                "them. If the results do not clearly contain the "
+                                "answer, say you could not confirm it."
+                            )
+                        else:
+                            search_note = "⚠️ Search failed: " + (err or "no results")
+                    if st.session_state.get("video_text"):
+                        extra += (
+                            "\n\nYOUTUBE VIDEO TRANSCRIPT (title: "
+                            + st.session_state.get("video_title", "")
+                            + "):\n" + st.session_state.video_text
+                            + "\n\nThe user is asking about this video. Answer "
+                            "from the transcript and give full details: main "
+                            "points in order, names, numbers, steps and examples. "
+                            "If the user shared only the link without a question, "
+                            "give a detailed summary. If the transcript does not "
+                            "contain the answer, say so. Do not invent things. "
+                            "For very long videos the transcript may be condensed "
+                            "notes or only partial."
+                        )
+                    elif vid:
+                        extra += (
+                            "\n\nThe user shared a YouTube link but its transcript "
+                            "could not be read. Do NOT guess what the video "
+                            "contains. Tell the user honestly that you could not "
+                            "read this video."
+                        )
+                    if not query and not qwarn and not vid:
+                        search_note = "ℹ️ No web search for this question"
+                    search_note = (
+                        video_note + "  " + qwarn + "  " + search_note
+                    ).strip()
+                    answer = fix_math(
+                        ask_model(
+                            [{"role": "system", "content": system_text + extra}]
+                            + recent
+                        )
+                    )
+                except Exception as error:
+                    st.session_state.messages.pop()
+                    msg = str(error)
+                    if "429" in msg or "rate limit" in msg.lower():
+                        if "(TPD)" in msg:
+                            kind = "روزانہ"
+                        elif "(TPM)" in msg:
+                            kind = "فی منٹ"
+                        else:
+                            kind = "روزانہ یا فی منٹ"
+                        wait = rate_limit_wait(error)
+                        if wait is None:
+                            when = "کچھ دیر"
+                        elif wait >= 60:
+                            when = "تقریباً " + str(int(wait // 60) + 1) + " منٹ"
+                        else:
+                            when = "تقریباً " + str(int(wait) + 1) + " سیکنڈ"
+                        st.error(
+                            "⏳ Groq کی " + kind + " مفت حد پوری ہو گئی ہے۔ "
+                            + when + " بعد دوبارہ کوشش کریں۔"
+                        )
+                    else:
+                        st.error("Error: " + msg)
+
+        if answer is not None:
+            if speak_on and answer.strip():
+                with speak_box:
+                    components.html(speak_html(answer), height=48)
+            with text_box:
+                st.markdown(answer)
+                if search_note:
+                    st.caption(search_note)
+            st.session_state.messages.append(
                 {"role": "assistant", "content": answer}
             )
