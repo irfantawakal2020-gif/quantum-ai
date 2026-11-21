@@ -126,6 +126,11 @@ footer { visibility: hidden; }
     border-radius: 32px !important;
     padding-left: 1.4rem !important;
 }
+[data-testid="stChatInputSubmitButton"],
+[data-testid="stChatInput"] button {
+    border-radius: 50% !important;
+    aspect-ratio: 1 / 1;
+}
 [data-testid="stChatInput"]:focus-within {
     animation: none;
     box-shadow:
