@@ -541,21 +541,23 @@ def trim_history(messages, max_chars, per_message=1500):
 
 
 def video_block(limit):
-    """The video transcript text that is added to the system prompt."""
+    """Video transcript text. It is attached to the user's message."""
     text = st.session_state.get("video_text", "")
     if not text:
         return ""
     return (
-        "\n\nYOUTUBE VIDEO TRANSCRIPT (title: "
-        + st.session_state.get("video_title", "")
-        + "):\n" + text[:limit]
-        + "\n\nThe user is asking about this video. Answer from the transcript "
-        "and give full details: main points in order, names, numbers, steps and "
-        "examples. If the user shared only the link without a question, give a "
-        "detailed summary. If the transcript does not contain the answer, say "
-        "so. Do not invent things. For very long videos the transcript may be "
-        "condensed notes or only partial. "
-        "IMPORTANT about names: the transcript was made by automatic speech "
+        "Here is the transcript of the YouTube video the user is talking about "
+        "(title: " + st.session_state.get("video_title", "") + "). You DO have "
+        "this transcript, so use it.\n\n"
+        "=== VIDEO TRANSCRIPT START ===\n" + text[:limit]
+        + "\n=== VIDEO TRANSCRIPT END ===\n\n"
+        "Rules: Answer from the transcript and give full details: main points "
+        "in order, names, numbers, steps and examples. If the user's message "
+        "below contains only a YouTube link and no question, write a detailed "
+        "summary of the video in Urdu script. If the transcript does not "
+        "contain the answer, say so. Do not invent things. For very long "
+        "videos the transcript may be condensed notes or only partial. "
+        "About names: the transcript was made by automatic speech "
         "recognition, so names of places and people may be misspelled or "
         "misheard. Never replace a name with a different one on your own; keep "
         "names as they appear in the transcript, and if a name looks wrong, say "
@@ -924,7 +926,17 @@ if prompt:
                         history = trim_history(
                             st.session_state.messages[-MAX_HISTORY:], hist_chars
                         )
-                        system = system_text + extra + video_block(video_limit)
+                        video_text = video_block(video_limit)
+                        if video_text and history:
+                            last = history[-1]
+                            history[-1] = {
+                                "role": last["role"],
+                                "content": (
+                                    video_text + "\n\nUSER MESSAGE:\n"
+                                    + last["content"]
+                                ),
+                            }
+                        system = system_text + extra
                         return fix_math(
                             ask_model([{"role": "system", "content": system}] + history)
                         )
