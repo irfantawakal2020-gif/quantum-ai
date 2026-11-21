@@ -2,6 +2,7 @@ import base64
 from datetime import date
 import json
 import os
+import random
 import re
 import time
 import traceback
@@ -249,6 +250,9 @@ system_text = (
     "Keep normal answers short and to the point, about 2 to 5 sentences, "
     "unless the user asks for details. "
     "Keep answers simple and polite. "
+    "You can also create pictures: when the user asks for an image, the app "
+    "generates it for them. Never say that you cannot create images. If the "
+    "request for a picture is unclear, ask what they want in it. "
     + MATH_RULES
 )
 
@@ -566,6 +570,121 @@ def video_block(limit):
     )
 
 
+# ---------- Image generation (Pollinations) ----------
+POLLI_KEY = st.secrets.get("POLLINATIONS_API_KEY")
+
+IMAGE_NOUNS = re.compile(
+    r"\b(image|images|picture|pictures|photo|photos|pic|pics|logo|painting|"
+    r"drawing|sketch|wallpaper|poster|tasveer|tasweer|tasvir)\b"
+    r"|تصویر|فوٹو|तस्वीर|फोटो|चित्र",
+    re.I,
+)
+IMAGE_VERBS = re.compile(
+    r"\b(generate|create|make|draw|paint|design|banao|bana|bnao|banado)\b"
+    r"|بنا|बना|बनाओ|ڈرا",
+    re.I,
+)
+
+
+DRAW_WORDS = re.compile(
+    r"\b(draw|paint|sketch|illustrate|portrait|cartoon|render)\b|ڈرا|पेंट|स्केच",
+    re.I,
+)
+
+
+def is_image_request(text):
+    """Cheap first check. The small model makes the final decision."""
+    text = text or ""
+    if len(text) > 400:
+        return False
+    return bool(IMAGE_NOUNS.search(text) or DRAW_WORDS.search(text))
+
+
+def make_image_prompt(history):
+    """Returns an English image prompt, 'REFUSE', or '' (not an image request)."""
+    last = history[-1]["content"] if history else ""
+    convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-4:])
+    try:
+        text = ask_small(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Turn the user's LAST message into ONE English prompt for "
+                        "an AI image generator (maximum 45 words): describe the "
+                        "subject, style, colors and lighting. Translate Urdu, "
+                        "Roman Urdu or Hindi into English. If the user is changing "
+                        "an earlier image, combine it with that earlier idea. Do "
+                        "not ask for any written text inside the image. "
+                        "If the message is NOT asking to create an image, reply "
+                        "exactly: NO. "
+                        "If it asks for sexual content, graphic violence or gore, "
+                        "hateful content, or harmful images of real people, reply "
+                        "exactly: REFUSE. "
+                        "Examples: 'shair ki tasveer banao' -> a majestic lion "
+                        "standing on a rock at golden hour, photorealistic; "
+                        "'mujhe billi ki photo chahiye' -> a cute fluffy cat, "
+                        "soft light, detailed; 'photo edit kaise karte hain' -> NO; "
+                        "'تصویر کیا ہوتی ہے' -> NO. "
+                        "Output only the prompt, the word NO, or the word REFUSE."
+                    ),
+                },
+                {"role": "user", "content": convo},
+            ],
+            max_tokens=300,
+        )
+    except Exception:
+        return last[:300] if IMAGE_VERBS.search(last) else ""
+    text = (text or "").strip().strip('"').strip()
+    if text.upper().rstrip(".!") == "REFUSE":
+        return "REFUSE"
+    if not text or text.upper().rstrip(".!") == "NO":
+        return ""
+    return text[:400]
+
+
+def generate_image(prompt):
+    """Returns (image_bytes, error)."""
+    seed = str(random.randint(1, 10**6))
+    quoted = urllib.parse.quote(prompt)
+    attempts = []
+    if POLLI_KEY:
+        attempts.append((
+            "https://gen.pollinations.ai/image/" + quoted
+            + "?model=flux&width=1024&height=1024&seed=" + seed,
+            {"Authorization": "Bearer " + POLLI_KEY},
+        ))
+    attempts.append((
+        "https://image.pollinations.ai/prompt/" + quoted
+        + "?model=flux&width=1024&height=1024&nologo=true&seed=" + seed,
+        {},
+    ))
+    last_error = "no result"
+    for url, extra in attempts:
+        for retry in range(2):
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 (QuantumAI)"}
+                headers.update(extra)
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=90) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "")
+                if ctype.startswith("image/") and len(data) > 1000:
+                    return data, ""
+                last_error = "unexpected response: " + ctype[:40]
+                break
+            except urllib.error.HTTPError as error:
+                last_error = "HTTP " + str(error.code)
+                if error.code == 429 and retry == 0:
+                    time.sleep(16)
+                    continue
+                break
+            except Exception as error:
+                last_error = str(error)[:100]
+                break
+    return None, last_error
+
+
 USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
@@ -803,7 +922,7 @@ def transcribe(audio_bytes):
     return text
 
 
-def show_message(role, text):
+def show_message(role, text, image=None):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
@@ -812,6 +931,9 @@ def show_message(role, text):
                 if line.strip():
                     safe_line = line.replace("]", "\\]")
                     st.markdown(":green[" + safe_line + "]")
+        elif image:
+            st.image(image)
+            st.caption(text)
         else:
             st.markdown(text)
 
@@ -830,7 +952,7 @@ else:
     )
 
 for message in st.session_state.messages:
-    show_message(message["role"], message["content"])
+    show_message(message["role"], message["content"], message.get("image"))
 
 prompt = st.chat_input("Ask Quantum", accept_audio=True)
 
@@ -857,6 +979,34 @@ if prompt:
 
     st.session_state.messages.append({"role": "user", "content": user_text})
     show_message("user", user_text)
+
+    if is_image_request(user_text) and not find_youtube_id(user_text):
+        with st.chat_message("assistant", avatar=BOT_AVATAR):
+            with st.spinner("🎨 تصویر بن رہی ہے..."):
+                img_prompt = make_image_prompt(st.session_state.messages)
+                img, img_err = (None, "")
+                if img_prompt and img_prompt != "REFUSE":
+                    img, img_err = generate_image(img_prompt)
+            if img_prompt == "REFUSE":
+                st.warning("معذرت، اس قسم کی تصویر نہیں بنائی جا سکتی۔")
+                st.session_state.messages.pop()
+                st.stop()
+            elif img:
+                st.image(img)
+                st.caption("🎨 " + img_prompt)
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "🎨 [Image generated] " + img_prompt,
+                        "image": img,
+                    }
+                )
+                st.stop()
+            elif img_prompt:
+                st.error("⚠️ تصویر نہیں بن سکی: " + img_err)
+                st.session_state.messages.pop()
+                st.stop()
+            # not an image request after all: continue with the normal answer
 
     recent = st.session_state.messages[-MAX_HISTORY:]
 
