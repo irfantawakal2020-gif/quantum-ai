@@ -533,8 +533,9 @@ def youtube_transcript(video_id):
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return "", "ویڈیو میں کیپشنز نہیں ملے"
-    return condense_transcript(text), ""
-    USER_AVATAR = "🧑‍💻"
+        return condense_transcript(text), ""
+    
+USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
 
 if "messages" not in st.session_state:
