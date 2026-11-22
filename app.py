@@ -216,20 +216,26 @@ today = date.today().strftime("%A, %d %B %Y")
 
 MATH_RULES = (
     r"For any math, physics or chemistry formula, write it in LaTeX. "
-    r"Use $...$ for inline formulas, with no spaces just inside the dollar signs. "
-    r"Put every display equation in its own block, with the $$ on separate "
+    r"Use ... for inline formulas, with no spaces just inside the dollar signs. "
+    r"Put every display equation in its own
+...
+block, with the $$ on separate "
     r"lines and a blank line before and after the block. "
-    r"Never use \(...\) or \[...\] delimiters. "
+    r"Never use  or
+
+delimiters. "
     r"Never use \begin{aligned}, \begin{align}, \begin{array}, & or \\ line breaks "
     r"inside a formula. Instead, write each step of a calculation as its own "
-    r"separate block. "
+    r"separate
+...
+block. "
     r"Never put plain text inside a $$ block, and never put any text right after "
     r"the closing $$ on the same line. "
     r"Never use the dollar sign for money; write Rs or USD instead. "
-    r"Write chemical formulas like $H_{2}SO_{4}$ and reactions with "
+    r"Write chemical formulas like H2SO4 and reactions with "
     r"\rightarrow, and do not use \ce. "
     r"For math, physics and chemistry problems, solve step by step "
-    r"and give the final answer clearly."
+    r"and give the final answer clearly. "
 )
 
 system_text = (
@@ -1815,3 +1821,4 @@ if prompt:
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer}
             )
+
