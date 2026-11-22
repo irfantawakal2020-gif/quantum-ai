@@ -38,7 +38,7 @@ has_logo = os.path.exists(LOGO_FILE)
 
 st.set_page_config(
     page_title="Quantum AI",
-    page_icon=LOGO_FILE if has_logo else "🤖",
+    page_icon=LOGO_FILE if has_logo else "⚛️",
 )
 
 CSS = """
@@ -50,6 +50,7 @@ CSS = """
 [data-testid="stToolbar"] { display: none; }
 footer { visibility: hidden; }
 .block-container { max-width: 760px; padding-top: 2rem; }
+
 .qa-header {
     display: flex;
     align-items: center;
@@ -60,7 +61,10 @@ footer { visibility: hidden; }
     width: 68px;
     height: 68px;
     border-radius: 18px;
+    object-fit: cover;
+    background: #0a0616;
     box-shadow: 0 0 24px rgba(150, 90, 255, 0.6);
+    flex-shrink: 0;
 }
 .qa-title {
     font-size: 2.3rem;
@@ -71,6 +75,7 @@ footer { visibility: hidden; }
     -webkit-text-fill-color: transparent;
 }
 .qa-sub { color: #b9a8e6; font-size: 0.95rem; }
+
 .qa-welcome {
     text-align: center;
     color: #cfc2f5;
@@ -80,6 +85,7 @@ footer { visibility: hidden; }
     border-radius: 16px;
     background: rgba(120, 70, 255, 0.08);
 }
+
 [data-testid="stChatMessage"] {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(160, 110, 255, 0.22);
@@ -102,12 +108,14 @@ footer { visibility: hidden; }
 .element-container:has(.qa-u) {
     display: none;
 }
+
 .katex-display {
     overflow-x: auto;
     overflow-y: hidden;
     padding: 0.3rem 0;
 }
 .katex { font-size: 1.08em; }
+
 [data-testid="stBottom"],
 [data-testid="stBottom"] > div {
     background: transparent !important;
@@ -164,7 +172,8 @@ def logo_html():
         return ""
     with open(LOGO_FILE, "rb") as f:
         data = base64.b64encode(f.read()).decode()
-    return '<img class="qa-logo" src="data:image/png;base64,' + data + '">'
+    mime = "image/jpeg" if LOGO_FILE.lower().endswith((".jpg", ".jpeg")) else "image/png"
+    return f'<img class="qa-logo" src="data:{mime};base64,{data}" alt="Quantum AI Logo">'
 
 
 st.markdown(
@@ -176,39 +185,37 @@ st.markdown(
 )
 
 mic_choice = st.radio(
-    "🎤 Mic language",
+    "Mic language",
     ["Auto", "English", "اردو"],
     horizontal=True,
 )
-
-speak_on = st.toggle("🔊 Read answers aloud", value=False)
+speak_on = st.toggle("Read answers aloud", value=False)
 ai_on = st.toggle(
-    "🎙️ AI transcript for videos without captions (uses Supadata credits)",
+    "AI transcript for videos without captions (uses Supadata credits)",
     value=True,
 )
 
 UNLOCK_HTML = r"""
 <script>
 try {
-  const W = window.parent;
-  const synth = W.speechSynthesis;
-  if (synth && !W.__qaUnlock) {
-    W.__qaUnlock = true;
-    const unlock = function () {
-      try {
-        if (synth.speaking || synth.pending) { return; }
-        const u = new W.SpeechSynthesisUtterance(" ");
-        u.volume = 0;
-        synth.speak(u);
-      } catch (e) {}
-    };
-    W.document.addEventListener("click", unlock, true);
-    W.document.addEventListener("touchend", unlock, true);
-  }
+    const W = window.parent;
+    const synth = W.speechSynthesis;
+    if (synth && !W._qaUnlock) {
+        W._qaUnlock = true;
+        const unlock = function () {
+            try {
+                if (synth.speaking || synth.pending) { return; }
+                const u = new W.SpeechSynthesisUtterance(" ");
+                u.volume = 0;
+                synth.speak(u);
+            } catch (e) {}
+        };
+        W.document.addEventListener("click", unlock, true);
+        W.document.addEventListener("touchend", unlock, true);
+    }
 } catch (e) {}
 </script>
 """
-
 if speak_on:
     components.html(UNLOCK_HTML, height=0)
 
@@ -217,19 +224,19 @@ today = date.today().strftime("%A, %d %B %Y")
 MATH_RULES = (
     r"For any math, physics or chemistry formula, write it in LaTeX. "
     r"Use $...$ for inline formulas, with no spaces just inside the dollar signs. "
-    r"Put every display equation in its own $$...$$ block, with the $$ on separate "
+    r"Put every display equation in its own block, with the $$ on separate "
     r"lines and a blank line before and after the block. "
-    r"Never use \( \) or \[ \] delimiters. "
+    r"Never use \(...\) or \[...\] delimiters. "
     r"Never use \begin{aligned}, \begin{align}, \begin{array}, & or \\ line breaks "
     r"inside a formula. Instead, write each step of a calculation as its own "
-    r"separate $$...$$ block. "
+    r"separate block. "
     r"Never put plain text inside a $$ block, and never put any text right after "
     r"the closing $$ on the same line. "
     r"Never use the dollar sign for money; write Rs or USD instead. "
-    r"Write chemical formulas like $\mathrm{H_2SO_4}$ and reactions with "
+    r"Write chemical formulas like $H_{2}SO_{4}$ and reactions with "
     r"\rightarrow, and do not use \ce. "
     r"For math, physics and chemistry problems, solve step by step "
-    r"and give the final answer clearly. "
+    r"and give the final answer clearly."
 )
 
 system_text = (
@@ -254,7 +261,7 @@ system_text = (
     "By default keep answers short and to the point, about 2 to 5 sentences. "
     "BUT whenever the user asks for details, a detailed or full explanation, an "
     "explanation of a difference or comparison, a summary of a topic, or uses "
-    "words like detail, detailed, explain, in depth, تفصیل, تفصیل سے, سمجھاؤ, "
+    "words like detail, detailed, explain, in depth, تفصیل, تفصیل سے سمجھاؤ, "
     "وضاحت, فرق, tafseel, tafsil, detail ke sath, तफ़सील, ब्योरा, then write a "
     "thorough answer of about 250 to 500 words, organized with short headings or "
     "bullet points: clear definitions, the key points, examples, and a short "
@@ -272,7 +279,6 @@ system_text = (
 )
 
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GROK_API_KEY")
-
 if not API_KEY:
     st.error("API key نہیں ملی۔ Streamlit secrets میں GROQ_API_KEY شامل کریں۔")
     st.stop()
@@ -286,12 +292,11 @@ client = OpenAI(
 TAVILY_KEY = st.secrets.get("TAVILY_API_KEY")
 tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
 
-
 SEARCH_WORDS = [
     "president", "prime minister", "minister", "ceo", "current", "latest",
     "news", "today", "price", "rate", "score", "weather", "who is", "winner",
     "election", "match", "dollar", "gold",
-    "صدر", "وزیراعظم", "وزیر اعظم", "وزیر", "آج", "تازہ", "موجودہ", "خبر",
+    "صدر", "وزير اعظم", "وزیر اعظم", "وزیر", "آج", "تازه", "موجوده", "خبر",
     "قیمت", "ڈالر", "سونا", "میچ", "انتخاب",
     "sadar", "wazir", "aaj", "taza", "maujooda", "khabar", "qeemat",
     "dollar", "sona", "match",
@@ -339,11 +344,12 @@ def make_search_query(history):
         if needs_search(last):
             return last[:200], "⚠️ Search check failed, searched with your text"
         return "", "⚠️ Search check failed: " + str(error)[:80]
-    query = (text or "").strip().strip('"').strip()
+
+    query = (text or "").strip().strip('"').strip("'")
     said_no = (
         not query
         or query.upper().rstrip(".!") == "NO"
-        or re.match(r"(?i)no\s*[.,:;!\-(]", query)
+        or bool(re.match(r"(?i)^no\s*[.,:;!\-(]", query))
     )
     if said_no:
         if needs_search(last):
@@ -354,7 +360,7 @@ def make_search_query(history):
 
 def web_context(query):
     if not tavily:
-        return "", "TAVILY_API_KEY Secrets میں نہیں ملی"
+        return "", "TAVILY_API_KEY Secrets میں نہیں ملی۔"
     try:
         res = tavily.search(
             query=query,
@@ -367,7 +373,8 @@ def web_context(query):
             parts.append("Quick answer: " + res["answer"])
         for r in res.get("results", []):
             parts.append(
-                "- " + r.get("title", "") + " (" + r.get("url", "") + "): "
+                "- " + r.get("title", "")
+                + " (" + r.get("url", "") + "): "
                 + r.get("content", "")[:400]
             )
         return "\n".join(parts), ""
@@ -440,13 +447,13 @@ def supadata_poll(job_id):
             return data, ""
         if status == "failed":
             return None, "Supadata job failed: " + str(data.get("error"))[:100]
-    return None, "ویڈیو بہت لمبی ہے، پروسیسنگ وقت پر مکمل نہیں ہوئی"
+    return None, "ویڈیو بہت لمبی ہے، پروسیسنگ وقت پر مکمل نہیں ہوئی۔"
 
 
 def supadata_transcript(video_id):
     """Backup method through Supadata. Returns (text, error)."""
     if not SUPADATA_KEY:
-        return "", "SUPADATA_API_KEY Secrets میں نہیں ملی"
+        return "", "SUPADATA_API_KEY Secrets میں نہیں ملی۔"
     mode = "auto" if ai_on else "native"
     try:
         link = "https://www.youtube.com/watch?v=" + video_id
@@ -469,6 +476,7 @@ def supadata_transcript(video_id):
         return "", "HTTP " + str(error.code) + " " + body
     except Exception as error:
         return "", str(error)[:150]
+
     content = data.get("content") or (data.get("result") or {}).get("content") or ""
     if isinstance(content, list):
         content = " ".join(seg.get("text", "") for seg in content)
@@ -480,7 +488,7 @@ def supadata_transcript(video_id):
 
 def summarize_chunk(chunk, number, total):
     """Detailed notes for one part of a long transcript."""
-    for attempt in range(3):
+    for _ in range(3):
         try:
             return ask_small(
                 [
@@ -519,7 +527,7 @@ def condense_transcript(text):
         time.sleep(6)
     if not notes:
         return text[:3500] + " [...video trimmed...] " + text[-1500:]
-    result = "\n".join(notes)
+    result = "\n\n".join(notes)
     if len(text) > len(chunks) * CHUNK_SIZE:
         result += "\n(Only the first part of this very long video was covered.)"
     return result
@@ -534,7 +542,7 @@ def youtube_transcript(video_id):
             return "", err + " | Supadata: " + err2
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
-        return "", "ویڈیو میں کیپشنز نہیں ملے"
+        return "", "ویڈیو میں کیپشنز نہیں ملے۔"
     return condense_transcript(text), ""
 
 
@@ -551,7 +559,7 @@ def trim_history(messages, max_chars, per_message=1500):
     for index in range(last_index, -1, -1):
         content = messages[index]["content"]
         if index != last_index and len(content) > per_message:
-            content = content[:per_message] + " ..."
+            content = content[:per_message] + "..."
         if kept and total + len(content) > max_chars:
             break
         kept.append({"role": messages[index]["role"], "content": content})
@@ -591,35 +599,31 @@ POLLI_KEY = st.secrets.get("POLLINATIONS_API_KEY")
 IMAGE_NOUNS = re.compile(
     r"\b(image|images|picture|pictures|photo|photos|pic|pics|logo|painting|"
     r"drawing|sketch|wallpaper|poster|tasveer|tasweer|tasvir|face|faces|chehra|"
-    r"diagram|diagrams|flowchart|illustration)\b"
-    r"|تصویر|فوٹو|چہرہ|ڈایاگرام|ڈائیگرام|خاکہ|तस्वीर|फोटो|चित्र|चेहरा|आरेख",
+    r"diagram|diagrams|flowchart|illustration)\b|"
+    r"تصویر|فوٹو|چہرہ|ڈایاگرام|ڈائیگرام|خاکہ|तस्वीर|फोटो|चित्र|चेहरा|आरेख",
     re.I,
 )
 IMAGE_VERBS = re.compile(
-    r"\b(generate|create|make|draw|paint|design|banao|bana|bnao|banado)\b"
-    r"|بنا|बना|बनाओ|ڈرا",
+    r"\b(generate|create|make|draw|paint|design|banao|bana|bnao|banado)\b|"
+    r"بنا|بناؤ|बना|बनाओ",
     re.I,
 )
-
-
 DRAW_WORDS = re.compile(
-    r"\b(draw|paint|sketch|illustrate|portrait|cartoon|render)\b|ڈرا|पेंट|स्केच",
+    r"\b(draw|paint|sketch|illustrate|portrait|cartoon|render)\b|पेंट|स्केच",
     re.I,
 )
-
-
 NO_DRAW = re.compile(
     r"(?i)\b(don'?t|do not|dont|no|without|never)\s+(?:\w+\s+){0,2}"
     r"(draw|diagram|picture|image|sketch|chart)\b"
     r"|\b(draw|diagram|picture|image|sketch|chart|tasveer)\s+(?:\w+\s+){0,2}"
     r"(mat|na\s+(?:banao|bana))\b"
-    r"|(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)\s*(?:\S+\s+){0,2}(مت|نہ)\b"
-    r"|\b(مت|نہ)\s*(?:\S+\s+){0,1}(ڈرا|بنانا|بناؤ|ڈایاگرام)"
-    r"|(डायग्राम|चित्र|तस्वीर)\s*(?:\S+\s+){0,2}(मत|न)\b"
-    r"|मत\s+(बनाओ|बनाना)"
-    r"|بغیر\s*(?:\S+\s+){0,1}(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)"
-    r"|बिना\s+(?:\S+\s+){0,1}(डायग्राम|चित्र|तस्वीर)"
-    r"|\b(bina|bagair|baghair)\s+(?:\w+\s+){0,1}(diagram|tasveer|picture|image)\b"
+    r"|\b(?:مت|نہ)\s+(?:\S+\s+){0,2}(?:ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)\b"
+    r"|\b(?:ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)\s*(?:\S+\s+){0,2}(?:مت|نہ|بغیر)\b"
+    r"|\b(?:डायग्राम|चित्र|तस्वीर)\s*(?:\S+\s+){0,2}(?:मत|न)\b"
+    r"|\b(?:मत|न)\s+(?:बनाओ|बनाना)\b"
+    r"|\b(?:बिना)\s+(?:\S+\s+){0,1}(?:डायग्राम|चित्र|तस्वीर)\b"
+    r"|\b(bina|bagair|baghair)\s+(?:\w+\s+){0,1}(diagram|tasveer|picture|image)\b",
+    re.I,
 )
 
 
@@ -634,18 +638,18 @@ def is_image_request(text):
 REFUSAL_LIKE = re.compile(
     r"(?i)^(i'?m sorry|i am sorry|sorry|i can'?t|i cannot|i am unable|i'?m unable|as an ai)"
 )
-
-
 TEACH_WORDS = re.compile(
     r"(?i)\b(explain|explanation|understand|teach|law|laws|theory|concept|principle|"
     r"formula|process|cycle|structure|working|how does|how do|difference|differences|"
-    r"compare|comparison|versus|vs|samjh\w*|samajh\w*|qanoon|farq|nizam)\b"
-    r"|سمجھ|وضاحت|قانون|فرق|اصول|نظریہ|समझ|नियम|फर्क|अंतर|सिद्धांत"
+    r"compare|comparison|versus|vs|samjh\w*|samajh\w*|qanoon|farq|nizam)\b|"
+    r"سمجھ|وضاحت|قانون|فرق|اصول|نظریہ|समझ|नियम|फर्क|अंतर|सिद्धांत",
+    re.I,
 )
 ART_WORDS = re.compile(
     r"(?i)\b(cartoon|anime|portrait|logo|poster|wallpaper|landscape|painting|"
-    r"realistic|photorealistic|face|faces|chehra|funny|cute|fantasy|sunset)\b"
-    r"|چہرہ|कार्टून|चेहरा"
+    r"realistic|photorealistic|face|faces|chehra|funny|cute|fantasy|sunset)\b|"
+    r"کارٹون|چہرہ|कार्टून|चेहरा",
+    re.I,
 )
 
 
@@ -669,7 +673,7 @@ def last_image_request(history):
 
 def parse_plan(text, last):
     """Returns (kind, text). kind: PICTURE, DIAGRAM, REFUSE or '' (not a request)."""
-    text = (text or "").strip().strip('"').strip()
+    text = (text or "").strip().strip('"').strip("'")
     upper = text.upper()
     if not text or upper.rstrip(".!") == "NO":
         return "", ""
@@ -704,8 +708,8 @@ def make_image_plan(history):
                         "DIAGRAM: <English description of the labelled "
                         "educational diagram to draw: what to show, which labels, "
                         "what to compare>\n"
-                        "NO  (the message is not a request to create an image)\n"
-                        "REFUSE  (only for sexual content, graphic violence or "
+                        "NO (the message is not a request to create an image)\n"
+                        "REFUSE (only for sexual content, graphic violence or "
                         "gore, hateful content, or harmful or deceptive images "
                         "of real people)\n"
                         "Rules: Use DIAGRAM for science, maths, geography, "
@@ -760,7 +764,6 @@ def make_image_plan(history):
 SVG_W = 800
 ROW_H = 335
 DIAGRAM_KINDS = ("forces", "atom", "flow", "compare", "illustrated")
-
 DIAGRAM_SYSTEM = (
     "You design educational diagrams. You do NOT draw: you only describe the "
     "content as JSON, and the app draws it neatly. Reply with ONE JSON object "
@@ -790,24 +793,7 @@ DIAGRAM_SYSTEM = (
     "10 sentences (about 110 to 170 words), with the key ideas, causes and a "
     "real-world example. It is written INSIDE the picture. Plain text, no "
     "LaTeX, no bullet points. All other text (title, headings, labels, notes, "
-    "points) must also be short English. Be scientifically correct.\n"
-    "Example for 'Newton's first law':\n"
-    '{"kind":"forces","title":"Newton\'s First Law of Motion","panels":['
-    '{"heading":"1. Object at rest","block":"Book on table","arrows":['
-    '{"side":"up","label":"Normal force","length":"normal"},'
-    '{"side":"down","label":"Weight","length":"normal"}],'
-    '"note":"Forces are balanced (net force = 0), so the book stays at rest."},'
-    '{"heading":"2. Constant speed","block":"Car on straight road","arrows":['
-    '{"side":"right","label":"Driving force","length":"normal"},'
-    '{"side":"left","label":"Friction + air drag","length":"normal"},'
-    '{"side":"up","label":"Normal force","length":"normal"},'
-    '{"side":"down","label":"Weight","length":"normal"}],'
-    '"note":"Forces are balanced, so speed and direction do not change."},'
-    '{"heading":"3. Unbalanced force","block":"Ball","arrows":['
-    '{"side":"right","label":"Push","length":"long"},'
-    '{"side":"left","label":"Friction","length":"short"}],'
-    '"note":"Net force is not zero, so the ball accelerates."}],'
-    '"explanation":"..."}'
+    "points) must also be short English. Be scientifically correct."
 )
 
 
@@ -816,12 +802,22 @@ def wrap_lines(text, width, max_lines=3):
     lines = textwrap.wrap(str(text or "").strip(), width=width) or [""]
     if len(lines) > max_lines:
         lines = lines[:max_lines]
-        lines[-1] = lines[-1][: max(1, width - 1)].rstrip(" .,;:") + "…"
+        lines[-1] = lines[-1][: max(1, width - 1)].rstrip(" .,;:") + "..."
     return lines
 
 
-def svg_text(x, y, text, size=16, anchor="middle", weight="normal",
-             fill="#1f2937", style="normal", width=24, max_lines=3):
+def svg_text(
+    x,
+    y,
+    text,
+    size=16,
+    anchor="middle",
+    weight="normal",
+    fill="#1f2937",
+    style="normal",
+    width=24,
+    max_lines=3,
+):
     """Multi-line text. y is the baseline of the first line."""
     out = ""
     line_h = int(size * 1.3)
@@ -830,14 +826,23 @@ def svg_text(x, y, text, size=16, anchor="middle", weight="normal",
             '<text x="%d" y="%d" font-family="Arial, Helvetica, sans-serif" '
             'font-size="%d" text-anchor="%s" font-weight="%s" font-style="%s" '
             'fill="%s">%s</text>'
-            % (x, y + index * line_h, size, anchor, weight, style, fill,
-               xml_escape(line))
+            % (x, y + index * line_h, size, anchor, weight, style, fill, xml_escape(line))
         )
     return out
 
 
-def svg_text_v(x, cy, text, size=15, anchor="middle", weight="normal",
-               fill="#1f2937", style="normal", width=20, max_lines=2):
+def svg_text_v(
+    x,
+    cy,
+    text,
+    size=15,
+    anchor="middle",
+    weight="normal",
+    fill="#1f2937",
+    style="normal",
+    width=20,
+    max_lines=2,
+):
     """Like svg_text, but vertically centred around cy."""
     count = len(wrap_lines(text, width, max_lines))
     line_h = int(size * 1.3)
@@ -883,14 +888,12 @@ def render_forces(spec):
                 '<line x1="30" y1="%d" x2="770" y2="%d" stroke="#e5e7eb" '
                 'stroke-width="2"/>' % (top - 12, top - 12)
             )
-        body += svg_text(30, top + 22, panel["heading"], 18, "start", "bold",
-                         width=70, max_lines=1)
+        body += svg_text(30, top + 22, panel["heading"], 18, "start", "bold", width=70, max_lines=1)
         body += (
             '<rect x="%d" y="%d" width="150" height="70" rx="8" fill="#e0e7ff" '
             'stroke="#1f2937" stroke-width="2"/>' % (cx - 75, cy - 35)
         )
-        body += svg_text_v(cx, cy, panel["block"], 16, "middle", "bold", width=16,
-                           max_lines=2)
+        body += svg_text_v(cx, cy, panel["block"], 16, "middle", "bold", width=16, max_lines=2)
         for arrow in panel["arrows"]:
             side, label = arrow["side"], arrow["label"]
             if side in ("up", "down"):
@@ -901,8 +904,7 @@ def render_forces(spec):
                     '<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#1d4ed8" '
                     'stroke-width="4" marker-end="url(#ah)"/>' % (cx, y1, cx, y2)
                 )
-                body += svg_text_v(cx + 14, (y1 + y2) // 2, label, 15, "start",
-                                   width=22, max_lines=2)
+                body += svg_text_v(cx + 14, (y1 + y2) // 2, label, 15, "start", width=22, max_lines=2)
             else:
                 length = side_len[arrow["length"]]
                 x1 = cx + 75 if side == "right" else cx - 75
@@ -912,14 +914,14 @@ def render_forces(spec):
                     'stroke-width="4" marker-end="url(#ah)"/>' % (x1, cy, x2, cy)
                 )
                 if side == "right":
-                    body += svg_text_v(x2 + 10, cy, label, 15, "start", width=18,
-                                       max_lines=3)
+                    body += svg_text_v(x2 + 10, cy, label, 15, "start", width=18, max_lines=3)
                 else:
-                    body += svg_text_v(x2 - 10, cy, label, 15, "end", width=18,
-                                       max_lines=3)
+                    body += svg_text_v(x2 - 10, cy, label, 15, "end", width=18, max_lines=3)
         if panel.get("note"):
-            body += svg_text(400, top + 296, panel["note"], 15, "middle",
-                             style="italic", fill="#374151", width=88, max_lines=2)
+            body += svg_text(
+                400, top + 296, panel["note"], 15, "middle",
+                style="italic", fill="#374151", width=88, max_lines=2
+            )
     return svg_frame(body, 90 + len(panels) * ROW_H, spec["title"], spec.get("explanation", ""))
 
 
@@ -938,8 +940,10 @@ def render_atom(spec):
         cx = int(panel_w * (index + 0.5))
         shells = panel["shells"]
         electrons = sum(shells)
-        body += svg_text(cx, 100, panel["heading"], 18, "middle", "bold",
-                         width=int(panel_w / 10.5), max_lines=3)
+        body += svg_text(
+            cx, 100, panel["heading"], 18, "middle", "bold",
+            width=int(panel_w / 10.5), max_lines=3
+        )
         for k, in_shell in enumerate(shells):
             radius = (30 + 26 * (k + 1)) * scale
             body += (
@@ -951,8 +955,7 @@ def render_atom(spec):
                 body += (
                     '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#ef4444" '
                     'stroke="#7f1d1d" stroke-width="1"/>'
-                    % (cx + radius * math.cos(angle), cy + radius * math.sin(angle),
-                       max(4.0, 6 * scale))
+                    % (cx + radius * math.cos(angle), cy + radius * math.sin(angle), max(4.0, 6 * scale))
                 )
         nucleus = max(17.0, 26 * scale)
         body += (
@@ -965,13 +968,19 @@ def render_atom(spec):
         net = panel["protons"] - electrons
         charge = "0 (neutral)" if net == 0 else ("%+d" % net)
         below = int(cy + tallest + 36)
-        body += svg_text(cx, below, "Protons: %d   Electrons: %d" % (panel["protons"], electrons),
-                         15, "middle", width=int(panel_w / 8))
-        body += svg_text(cx, below + 24, "Net charge: " + charge, 16, "middle", "bold",
-                         fill="#b91c1c" if net else "#047857", width=int(panel_w / 8))
+        body += svg_text(
+            cx, below, "Protons: %d Electrons: %d" % (panel["protons"], electrons),
+            15, "middle", width=int(panel_w / 8)
+        )
+        body += svg_text(
+            cx, below + 24, "Net charge: " + charge, 16, "middle", "bold",
+            fill="#b91c1c" if net else "#047857", width=int(panel_w / 8)
+        )
         if panel.get("note"):
-            body += svg_text(cx, below + 56, panel["note"], 14, "middle", style="italic",
-                             fill="#374151", width=int(panel_w / 7.6), max_lines=3)
+            body += svg_text(
+                cx, below + 56, panel["note"], 14, "middle", style="italic",
+                fill="#374151", width=int(panel_w / 7.6), max_lines=3
+            )
     return svg_frame(body, int(cy + tallest + 36 + 56 + 70), spec["title"], spec.get("explanation", ""))
 
 
@@ -988,13 +997,15 @@ def render_flow(spec):
         body += (
             '<circle cx="%d" cy="%d" r="16" fill="#1d4ed8"/>' % (x0 + 32, y + box_h // 2)
         )
-        body += svg_text(x0 + 32, y + box_h // 2 + 6, str(index + 1), 16, "middle",
-                         "bold", fill="#ffffff")
-        body += svg_text(x0 + 66, y + 30, step["title"], 17, "start", "bold", width=50,
-                         max_lines=1)
+        body += svg_text(
+            x0 + 32, y + box_h // 2 + 6, str(index + 1), 16, "middle", "bold", fill="#ffffff"
+        )
+        body += svg_text(x0 + 66, y + 30, step["title"], 17, "start", "bold", width=50, max_lines=1)
         if step.get("detail"):
-            body += svg_text(x0 + 66, y + 54, step["detail"], 14, "start",
-                             fill="#374151", width=64, max_lines=2)
+            body += svg_text(
+                x0 + 66, y + 54, step["detail"], 14, "start",
+                fill="#374151", width=64, max_lines=2
+            )
         if index < len(steps) - 1:
             body += (
                 '<line x1="400" y1="%d" x2="400" y2="%d" stroke="#1d4ed8" '
@@ -1022,8 +1033,10 @@ def render_compare(spec):
             '<rect x="%d" y="90" width="%d" height="44" rx="8" fill="%s" '
             'stroke="#1f2937" stroke-width="2"/>' % (x, col_w, colors[index % 3])
         )
-        body += svg_text_v(x + col_w / 2, 112, col["heading"], 18, "middle", "bold",
-                           width=int(col_w / 10.5), max_lines=1)
+        body += svg_text_v(
+            x + col_w / 2, 112, col["heading"], 18, "middle", "bold",
+            width=int(col_w / 10.5), max_lines=1
+        )
         body += (
             '<rect x="%d" y="134" width="%d" height="%d" rx="8" fill="#ffffff" '
             'stroke="#9ca3af" stroke-width="2"/>' % (x, col_w, body_h)
@@ -1032,8 +1045,10 @@ def render_compare(spec):
         for lines in wrapped[index]:
             for n, line in enumerate(lines):
                 shown = ("• " + line) if n == 0 else line
-                body += svg_text(x + (12 if n == 0 else 23), y, shown, 15, "start",
-                                 width=chars + 8, max_lines=1)
+                body += svg_text(
+                    x + (12 if n == 0 else 23), y, shown, 15, "start",
+                    width=chars + 8, max_lines=1
+                )
                 y += 20
             y += 10
     return svg_frame(body, 134 + body_h + 30, spec["title"], spec.get("explanation", ""))
@@ -1093,7 +1108,9 @@ def parse_spec(raw):
                     return None
                 panels.append({
                     "heading": _text(p.get("heading"), 80),
-                    "protons": protons, "neutrons": neutrons, "shells": shells,
+                    "protons": protons,
+                    "neutrons": neutrons,
+                    "shells": shells,
                     "note": _text(p.get("note"), 160),
                 })
             spec["panels"] = panels
@@ -1204,8 +1221,8 @@ def svg_is_valid(svg):
 
 def generate_diagram(description, user_text=""):
     """The model writes the content, the app draws it. Returns (svg, explanation, error)."""
-    last_error = "ڈایاگرام کا مواد درست فارمیٹ میں نہیں ملا"
-    for attempt in range(2):
+    last_error = "ڈایاگرام کا مواد درست فارمیٹ میں نہیں ملا۔"
+    for _ in range(2):
         try:
             raw = ask_model(
                 [
@@ -1233,7 +1250,7 @@ def generate_diagram(description, user_text=""):
             else:
                 svg = render_spec(spec)
             if svg_is_valid(svg):
-                return svg, "", ""
+                return svg, spec.get("explanation", ""), ""
     return None, "", last_error
 
 
@@ -1246,7 +1263,7 @@ def show_svg(svg, key):
         unsafe_allow_html=True,
     )
     options = dict(
-        label="⬇️ Download diagram (SVG)",
+        label="Download diagram (SVG)",
         data=svg,
         file_name="quantum_ai_diagram.svg",
         mime="image/svg+xml",
@@ -1267,7 +1284,7 @@ def image_download_button(image, key):
     else:
         ext, mime = "jpg", "image/jpeg"
     options = dict(
-        label="⬇️ Download image",
+        label="Download image",
         data=image,
         file_name="quantum_ai_image." + ext,
         mime=mime,
@@ -1306,7 +1323,7 @@ def generate_image(prompt):
                 req = urllib.request.Request(url, headers=headers)
                 with urllib.request.urlopen(req, timeout=90) as r:
                     data = r.read()
-                    ctype = r.headers.get("Content-Type", "")
+                ctype = r.headers.get("Content-Type", "")
                 if ctype.startswith("image/") and len(data) > 1000:
                     return data, ""
                 last_error = "unexpected response: " + ctype[:40]
@@ -1323,27 +1340,27 @@ def generate_image(prompt):
     return None, last_error
 
 
-USER_AVATAR = "🧑‍💻"
-BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
+USER_AVATAR = ""
+BOT_AVATAR = LOGO_FILE if has_logo else "⚛️"
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 SPEAK_TEMPLATE = r"""
 <div style="font-family: sans-serif;">
-  <button id="listen" style="background:#6d28d9;color:#fff;border:none;
-    border-radius:20px;padding:6px 14px;cursor:pointer;margin-right:6px;">
-    🔊 Listen</button>
-  <button id="stop" style="background:#3b2a6b;color:#fff;border:none;
-    border-radius:20px;padding:6px 14px;cursor:pointer;">
-    ⏹ Stop</button>
-  <span id="hint" style="color:#cfc2f5;font-size:12px;margin-left:6px;"></span>
+    <button id="listen" style="background:#6d28d9; color:#fff; border:none;
+        border-radius:20px; padding:6px 14px; cursor:pointer; margin-right:6px;">
+        Listen</button>
+    <button id="stop" style="background:#3b2a6b; color:#fff; border:none;
+        border-radius:20px; padding:6px 14px; cursor:pointer;">
+        Stop</button>
+    <span id="hint" style="color:#cfc2f5; font-size: 12px; margin-left:6px;"></span>
 </div>
 <script>
 const text = __TEXT__;
 let host = window;
 try {
-  if (window.parent && window.parent.speechSynthesis) { host = window.parent; }
+    if (window.parent && window.parent.speechSynthesis) { host = window.parent; }
 } catch (e) { host = window; }
 const synth = host.speechSynthesis;
 const Utter = host.SpeechSynthesisUtterance;
@@ -1351,58 +1368,57 @@ const hint = document.getElementById("hint");
 let started = false;
 
 function pickVoice(lang) {
-  const voices = synth.getVoices() || [];
-  const prefix = lang.slice(0, 2).toLowerCase();
-  for (const v of voices) {
-    const vl = (v.lang || "").toLowerCase().replace("_", "-");
-    if (vl.startsWith(prefix)) { return v; }
-  }
-  return null;
+    const voices = synth.getVoices() || [];
+    const prefix = lang.slice(0, 2).toLowerCase();
+    for (const v of voices) {
+        const vl = (v.lang || "").toLowerCase().replace("_", "-");
+        if (vl.startsWith(prefix)) { return v; }
+    }
+    return null;
 }
 
 function speakNow() {
-  if (!synth || !Utter) { hint.textContent = "Speech not supported"; return; }
-  started = false;
-  const isUrdu = /[\u0600-\u06FF]/.test(text);
-  const lang = isUrdu ? "ur-PK" : "en-US";
-  const voice = pickVoice(lang);
-  const parts = text.match(/[^.!?\u06D4\u061F\n]+[.!?\u06D4\u061F]*/g) || [text];
-  for (const part of parts) {
-    const t = part.trim();
-    if (!t) { continue; }
-    const u = new Utter(t);
-    u.lang = lang;
-    if (voice) { u.voice = voice; }
-    u.rate = 1.1;
-    u.onstart = function () { started = true; hint.textContent = ""; };
-    synth.speak(u);
-  }
-  setTimeout(function () {
-    if (!started) { hint.textContent = "No sound? Tap Listen."; }
-  }, 2500);
+    if (!synth || !Utter) { hint.textContent = "Speech not supported"; return; }
+    started = false;
+    const isUrdu = /[\u0600-\u06FF]/.test(text);
+    const lang = isUrdu ? "ur-PK" : "en-US";
+    const voice = pickVoice(lang);
+    const parts = text.match(/[^.!?\u06D4\u061F\n]+[.!?\u06D4\u061F]*/g) || [text];
+    for (const part of parts) {
+        const t = part.trim();
+        if (!t) { continue; }
+        const u = new Utter(t);
+        u.lang = lang;
+        if (voice) { u.voice = voice; }
+        u.rate = 1.1;
+        u.onstart = function () { started = true; hint.textContent = ""; };
+        synth.speak(u);
+    }
+    setTimeout(function () {
+        if (!started) { hint.textContent = "No sound? Tap Listen."; }
+    }, 2500);
 }
 
 document.getElementById("listen").onclick = function () {
-  if (synth) { synth.cancel(); }
-  setTimeout(speakNow, 150);
+    if (synth) { synth.cancel(); }
+    setTimeout(speakNow, 150);
 };
 document.getElementById("stop").onclick = function () {
-  if (synth) { synth.cancel(); }
+    if (synth) { synth.cancel(); }
 };
-
 if (synth && (synth.speaking || synth.pending)) {
-  synth.cancel();
-  setTimeout(speakNow, 150);
+    synth.cancel();
+    setTimeout(speakNow, 150);
 } else {
-  setTimeout(speakNow, 250);
+    setTimeout(speakNow, 250);
 }
 </script>
 """
 
 
 def speak_html(text):
-    clean = re.sub(r"\$\$.*?\$\$", " ", text, flags=re.S)
-    clean = re.sub(r"\$[^$]*\$", " ", clean)
+    clean = re.sub(r"\$\$.*?\$\$", "", text, flags=re.S)
+    clean = re.sub(r"\$[^\$]*\$", "", clean)
     clean = re.sub(r"[*#`_>~\[\]]", "", clean)
     clean = clean[:2500]
     payload = json.dumps(clean).replace("</", "<\\/")
@@ -1420,7 +1436,7 @@ def clean_display_block(match):
 def fix_math(text):
     text = re.sub(
         r"\\\[(.+?)\\\]",
-        lambda m: "$$" + m.group(1) + "$$",
+        lambda m: "\n\n$$\n" + m.group(1).strip() + "\n$$\n\n",
         text,
         flags=re.S,
     )
@@ -1434,7 +1450,7 @@ def fix_math(text):
         text = text + "\n$$"
     text = re.sub(r"\$\$(.+?)\$\$", clean_display_block, text, flags=re.S)
     text = re.sub(
-        r"(?<!\$)\$(?!\$)[ \t]*([^$\n]+?)[ \t]*(?<!\$)\$(?!\$)",
+        r"(?<!\$)\$(?!\$)[ \t]*([^\$\n]+?)[ \t]*(?<!\$)\$(?!\$)",
         lambda m: "$" + m.group(1) + "$",
         text,
     )
@@ -1562,14 +1578,15 @@ def transcribe(audio_bytes):
 
 def show_message(role, text, image=None, key=0, svg=None, explanation=None):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
-    with st.chat_message(role, avatar=avatar):
+    with st.chat_message(role, avatar=avatar or None):
         if role == "user":
             st.markdown('<span class="qa-u"></span>', unsafe_allow_html=True)
             for line in text.split("\n"):
                 if line.strip():
-                    safe_line = line.replace("]", "\\]")
-                    st.markdown(":green[" + safe_line + "]")
+                    st.markdown(line)
         elif svg:
+            safe_line = text.replace("[", "\\[").replace("]", "\\]")
+            st.markdown(":green[" + safe_line + "]")
             show_svg(svg, key)
             if explanation:
                 st.markdown(explanation)
@@ -1582,17 +1599,17 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None):
 
 
 if st.session_state.messages:
-    if st.button("🗑️ New chat"):
+    if st.button("New chat"):
         st.session_state.messages = []
         for key in ("video_id", "video_text", "video_title"):
             st.session_state.pop(key, None)
         st.rerun()
-else:
-    st.markdown(
-        '<div class="qa-welcome">👋 Welcome!<br>'
-        "آپ اردو، رومن اردو یا انگریزی میں سوال پوچھ سکتے ہیں۔</div>",
-        unsafe_allow_html=True,
-    )
+
+st.markdown(
+    '<div class="qa-welcome">👋 Welcome!<br>'
+    'آپ اردو، رومن اردو یا انگریزی میں سوال پوچھ سکتے ہیں۔</div>',
+    unsafe_allow_html=True,
+)
 
 for index, message in enumerate(st.session_state.messages):
     show_message(
@@ -1608,14 +1625,12 @@ prompt = st.chat_input("Ask Quantum", accept_audio=True)
 
 if prompt:
     user_text = prompt.text or ""
-
     if prompt.audio:
         try:
             spoken = transcribe(prompt.audio.getvalue())
             if spoken is None:
                 st.warning(
-                    "آواز کی زبان پہچانی نہیں گئی۔ اوپر Mic language میں "
-                    "English یا اردو چن کر دوبارہ بولیں۔"
+                    "آواز کی زبان پہچانی نہیں گئی۔ اوپر Mic language میں English یا اردو چن کر دوبارہ بولیں۔"
                 )
             elif spoken:
                 if has_devanagari(spoken):
@@ -1631,8 +1646,8 @@ if prompt:
     show_message("user", user_text)
 
     if is_image_request(user_text) and not find_youtube_id(user_text):
-        with st.chat_message("assistant", avatar=BOT_AVATAR):
-            with st.spinner("🎨 تصویر بن رہی ہے..."):
+        with st.chat_message("assistant", avatar=BOT_AVATAR or None):
+            with st.spinner("تصویر بن رہی ہے..."):
                 kind, plan = make_image_plan(st.session_state.messages)
                 img, svg, img_err, expl = None, None, "", ""
                 if kind == "PICTURE":
@@ -1640,51 +1655,48 @@ if prompt:
                 elif kind == "DIAGRAM":
                     svg, expl, img_err = generate_diagram(plan, user_text)
                     expl = fix_math(expl) if expl else ""
-            slot = len(st.session_state.messages)
-            if kind == "REFUSE":
-                st.warning("معذرت، اس قسم کی تصویر نہیں بنائی جا سکتی۔")
-                st.session_state.messages.pop()
-                st.stop()
-            elif img:
-                st.image(img)
-                st.caption("🎨 " + plan)
-                image_download_button(img, slot)
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "🎨 [Image generated] " + plan,
-                        "image": img,
-                    }
-                )
-                st.stop()
-            elif svg:
-                show_svg(svg, slot)
-                if expl:
-                    st.markdown(expl)
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "📊 [Diagram generated] " + plan,
-                        "svg": svg,
-                        "explanation": expl,
-                    }
-                )
-                st.stop()
-            elif kind:
-                st.error("⚠️ تصویر نہیں بن سکی: " + img_err)
-                st.session_state.messages.pop()
-                st.stop()
-            # kind == "": not an image request after all, continue normally
+                slot = len(st.session_state.messages)
+                if kind == "REFUSE":
+                    st.warning("معذرت، اس قسم کی تصویر نہیں بنائی جا سکتی۔")
+                    st.session_state.messages.pop()
+                    st.stop()
+                elif img:
+                    st.image(img)
+                    st.caption(plan)
+                    image_download_button(img, slot)
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "[Image generated] " + plan,
+                            "image": img,
+                        }
+                    )
+                    st.stop()
+                elif svg:
+                    show_svg(svg, slot)
+                    if expl:
+                        st.markdown(expl)
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": "[Diagram generated] " + plan,
+                            "svg": svg,
+                            "explanation": expl,
+                        }
+                    )
+                    st.stop()
+                elif kind:
+                    st.error("⚠️ تصویر نہیں بن سکی: " + img_err)
+                    st.session_state.messages.pop()
+                    st.stop()
 
     recent = st.session_state.messages[-MAX_HISTORY:]
-
-    with st.chat_message("assistant", avatar=BOT_AVATAR):
+    with st.chat_message("assistant", avatar=BOT_AVATAR or None):
         text_box = st.container()
         speak_box = st.container()
         answer = None
         search_note = ""
         video_note = ""
-
         with text_box:
             with st.spinner("Thinking..."):
                 try:
@@ -1701,28 +1713,28 @@ if prompt:
                             st.session_state.video_title = youtube_title(vid)
                             video_note = "🎬 YouTube transcript loaded"
                         else:
-                            video_note = "⚠️ YouTube transcript failed: " + yt_err
-                    if vid:
-                        query, qwarn = "", ""
-                    else:
+                            if vid:
+                                video_note = "⚠️ YouTube transcript failed: " + yt_err
+                    if not vid:
                         query, qwarn = make_search_query(st.session_state.messages) or (
-                            "", "⚠️ search check returned nothing"
+                            "",
+                            "search check returned nothing",
                         )
-                    if query:
-                        info, err = web_context(query) or ("", "no result returned")
-                        if info:
-                            search_note = "🔎 Web search: " + query
-                            extra = (
-                                "\n\nFRESH WEB SEARCH RESULTS (searched today, "
-                                + today + ", for: " + query + "):\n" + info
-                                + "\n\nFor current facts, answer ONLY from these "
-                                "results. Ignore your own memory and ignore any "
-                                "earlier answers in this chat that disagree with "
-                                "them. If the results do not clearly contain the "
-                                "answer, say you could not confirm it."
-                            )
-                        else:
-                            search_note = "⚠️ Search failed: " + (err or "no results")
+                        if query:
+                            info, err = web_context(query) or ("", "no result returned")
+                            if info:
+                                search_note = "🌐 Web search: " + query
+                                extra = (
+                                    "\n\nFRESH WEB SEARCH RESULTS (searched today, "
+                                    + today + ", for: " + query + "):\n" + info
+                                    + "\n\nFor current facts, answer ONLY from these "
+                                    "results. Ignore your own memory and ignore any "
+                                    "earlier answers in this chat that disagree with "
+                                    "them. If the results do not clearly contain the "
+                                    "answer, say you could not confirm it."
+                                )
+                            else:
+                                search_note = "⚠️ Search failed: " + (err or "no results")
                     if vid and not st.session_state.get("video_text"):
                         extra += (
                             "\n\nThe user shared a YouTube link but its transcript "
@@ -1731,9 +1743,9 @@ if prompt:
                             "read this video."
                         )
                     if not query and not qwarn and not vid:
-                        search_note = "ℹ️ No web search for this question"
+                        search_note = "No web search for this question"
                     search_note = (
-                        video_note + "  " + qwarn + "  " + search_note
+                        video_note + " " + qwarn + " " + search_note
                     ).strip()
                     has_video = bool(st.session_state.get("video_text"))
                     history_chars = (
@@ -1769,10 +1781,11 @@ if prompt:
                         if not too_big:
                             raise
                         answer = attempt(2500, 1200)
-                        search_note = (search_note + "  ✂️ Context shortened").strip()
+                        search_note = (search_note + " | Context shortened").strip()
+
                     if st.session_state.pop("used_backup", False):
                         search_note = (
-                            search_note + "  ↪️ Backup model (main daily limit reached)"
+                            search_note + " | Backup model (main daily limit reached)"
                         ).strip()
                 except Exception as error:
                     st.session_state.messages.pop()
@@ -1792,7 +1805,7 @@ if prompt:
                         else:
                             when = "تقریباً " + str(int(wait) + 1) + " سیکنڈ"
                         st.error(
-                            "⏳ Groq کی " + kind + " مفت حد پوری ہو گئی ہے۔ "
+                            "Groq کی " + kind + " مفت حد پوری ہو گئی ہے۔ "
                             + when + " بعد دوبارہ کوشش کریں۔"
                         )
                     else:
@@ -1807,9 +1820,9 @@ if prompt:
                 st.markdown(answer)
                 if search_note:
                     st.caption(search_note)
-                if video_note.startswith("🎬") and st.session_state.get("video_text"):
-                    with st.expander("📄 Video transcript (check names here)"):
-                        st.write(st.session_state.video_text)
+            if video_note.startswith("🎬") and st.session_state.get("video_text"):
+                with st.expander("📄 Video transcript (check names here)"):
+                    st.write(st.session_state.video_text)
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer}
             )
