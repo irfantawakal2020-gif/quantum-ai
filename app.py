@@ -10,6 +10,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import tempfile
 import textwrap
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape as xml_escape
@@ -34,11 +35,40 @@ HINTS = {
     "Auto": "Hello, how are you? آپ کیسے ہیں؟",
 }
 
+def square_logo():
+    """Crops a wide or tall logo to a square around the emblem. Returns a file path."""
+    try:
+        from PIL import Image, ImageChops
+
+        out = os.path.join(tempfile.gettempdir(), "quantum_ai_logo_square.png")
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(LOGO_FILE):
+            return out
+        im = Image.open(LOGO_FILE).convert("RGB")
+        w, h = im.size
+        corners = [im.getpixel(p) for p in ((2, 2), (w - 3, 2), (2, h - 3), (w - 3, h - 3))]
+        background = tuple(sum(c[i] for c in corners) // 4 for i in range(3))
+        diff = ImageChops.difference(im, Image.new("RGB", im.size, background))
+        box = diff.convert("L").point(lambda p: 255 if p > 45 else 0).getbbox()
+        if not box:
+            box = (0, 0, w, h)
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        side = max(box[2] - box[0], box[3] - box[1]) * 1.3
+        side = min(max(side, 64), min(w, h))
+        left = min(max(cx - side / 2, 0), w - side)
+        top = min(max(cy - side / 2, 0), h - side)
+        square = im.crop((int(left), int(top), int(left + side), int(top + side)))
+        square.resize((512, 512), Image.LANCZOS).save(out, "PNG")
+        return out
+    except Exception:
+        return LOGO_FILE
+
+
 has_logo = os.path.exists(LOGO_FILE)
+logo_path = square_logo() if has_logo else None
 
 st.set_page_config(
     page_title="Quantum AI",
-    page_icon=LOGO_FILE if has_logo else "🤖",
+    page_icon=logo_path or "🤖",
 )
 
 CSS = """
@@ -60,6 +90,8 @@ footer { visibility: hidden; }
     width: 68px;
     height: 68px;
     border-radius: 18px;
+    object-fit: cover;
+    object-position: center;
     box-shadow: 0 0 24px rgba(150, 90, 255, 0.6);
 }
 .qa-title {
@@ -162,7 +194,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 def logo_html():
     if not has_logo:
         return ""
-    with open(LOGO_FILE, "rb") as f:
+    with open(logo_path, "rb") as f:
         data = base64.b64encode(f.read()).decode()
     return '<img class="qa-logo" src="data:image/png;base64,' + data + '">'
 
@@ -1324,7 +1356,7 @@ def generate_image(prompt):
 
 
 USER_AVATAR = "🧑‍💻"
-BOT_AVATAR = LOGO_FILE if has_logo else "🤖"
+BOT_AVATAR = logo_path or "🤖"
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
