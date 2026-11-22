@@ -248,8 +248,17 @@ system_text = (
     "reply in Urdu script and never use Devanagari. "
     "Never mix scripts in one reply. "
     "Never reply in any language other than English, Urdu or Roman Urdu. "
-    "Keep normal answers short and to the point, about 2 to 5 sentences, "
-    "unless the user asks for details. "
+    "By default keep answers short and to the point, about 2 to 5 sentences. "
+    "BUT whenever the user asks for details, a detailed or full explanation, an "
+    "explanation of a difference or comparison, a summary of a topic, or uses "
+    "words like detail, detailed, explain, in depth, تفصیل, تفصیل سے, سمجھاؤ, "
+    "وضاحت, فرق, tafseel, tafsil, detail ke sath, तफ़सील, ब्योरा, then write a "
+    "thorough answer of about 250 to 500 words, organized with short headings or "
+    "bullet points: clear definitions, the key points, examples, and a short "
+    "summary. For a difference or comparison, cover each side separately and "
+    "then give a comparison list or a markdown table. Never answer such a "
+    "request in only one or two sentences. If the user says not to draw a "
+    "diagram or picture, answer in text only. "
     "Keep answers simple and polite. "
     "You can also create pictures: when the user asks for an image, the app "
     "generates it for them. Never say that you cannot create images. If the "
@@ -596,10 +605,25 @@ DRAW_WORDS = re.compile(
 )
 
 
+NO_DRAW = re.compile(
+    r"(?i)\b(don'?t|do not|dont|no|without|never)\s+(?:\w+\s+){0,2}"
+    r"(draw|diagram|picture|image|sketch|chart)\b"
+    r"|\b(draw|diagram|picture|image|sketch|chart|tasveer)\s+(?:\w+\s+){0,2}"
+    r"(mat|na\s+(?:banao|bana))\b"
+    r"|(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)\s*(?:\S+\s+){0,2}(مت|نہ)\b"
+    r"|\b(مت|نہ)\s*(?:\S+\s+){0,1}(ڈرا|بنانا|بناؤ|ڈایاگرام)"
+    r"|(डायग्राम|चित्र|तस्वीर)\s*(?:\S+\s+){0,2}(मत|न)\b"
+    r"|मत\s+(बनाओ|बनाना)"
+    r"|بغیر\s*(?:\S+\s+){0,1}(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)"
+    r"|बिना\s+(?:\S+\s+){0,1}(डायग्राम|चित्र|तस्वीर)"
+    r"|\b(bina|bagair|baghair)\s+(?:\w+\s+){0,1}(diagram|tasveer|picture|image)\b"
+)
+
+
 def is_image_request(text):
     """Cheap first check. The small model makes the final decision."""
     text = text or ""
-    if len(text) > 400:
+    if len(text) > 400 or NO_DRAW.search(text):
         return False
     return bool(IMAGE_NOUNS.search(text) or DRAW_WORDS.search(text))
 
