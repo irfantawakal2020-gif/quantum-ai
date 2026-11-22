@@ -1,6 +1,7 @@
 import base64
 from datetime import date
 import json
+import math
 import os
 import random
 import re
@@ -9,7 +10,9 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import textwrap
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as xml_escape
 
 from openai import OpenAI
 from tavily import TavilyClient
@@ -721,62 +724,395 @@ def make_image_plan(history):
     return parse_plan(text, last)
 
 
-def clean_svg(raw):
-    """Returns a safe, valid SVG string, or '' if the text is not usable."""
-    found = re.search(r"(?is)<svg\b.*</svg>", raw or "")
-    if not found:
-        return ""
-    svg = found.group(0)
-    if "xmlns=" not in svg[:300]:
-        svg = svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"', 1)
-    check = svg.replace("http://www.w3.org/2000/svg", "")
-    check = check.replace("http://www.w3.org/1999/xlink", "")
-    if re.search(
-        r"(?i)https?://|<script|<foreignobject|<image|<iframe|javascript:|\son\w+\s*=",
-        check,
-    ):
-        return ""
-    if len(svg) > 40000:
-        return ""
-    try:
-        root = ET.fromstring(svg)
-    except ET.ParseError:
-        return ""
-    if not root.tag.endswith("svg"):
-        return ""
-    return svg
+# ---------- Diagrams: the model writes the CONTENT, this code does the drawing ----------
+SVG_W = 800
+ROW_H = 335
+DIAGRAM_KINDS = ("forces", "atom", "flow", "compare")
+
+DIAGRAM_SYSTEM = (
+    "You design educational diagrams. You do NOT draw: you only describe the "
+    "content as JSON, and the app draws it neatly. Reply with ONE JSON object "
+    "and nothing else (no markdown fences). Choose the best 'kind':\n"
+    "1) forces: physics situations with forces (Newton's laws, friction, "
+    "tension, balanced or unbalanced forces). Fields: kind, title, panels "
+    "(1 to 3), each panel: heading, block (name of the object), arrows (1 to 4), "
+    "note. Each arrow: side (up, down, left or right; at most ONE arrow per "
+    "side), label (max 4 words), length (short, normal or long; equal lengths "
+    "mean balanced forces).\n"
+    "2) atom: Bohr model of atoms, ions and isotopes. Fields: kind, title, panels "
+    "(1 to 3), each panel: heading (for example 'Sodium atom (Na)'), protons, "
+    "neutrons, shells (electrons per shell, for example [2,8,1]), note. Do not "
+    "write the charge: the app calculates it.\n"
+    "3) flow: processes, cycles, sequences and algorithms. Fields: kind, title, "
+    "steps (2 to 8), each step: title (max 4 words), detail (max 12 words).\n"
+    "4) compare: comparisons and concept summaries. Fields: kind, title, columns "
+    "(2 or 3), each column: heading (max 3 words), points (3 to 6 short points, "
+    "max 14 words each).\n"
+    "Always add 'explanation': 4 to 7 clear sentences explaining the topic, in "
+    "the same language and script as the user's original message (Urdu script "
+    "for Urdu or Hindi, Roman Urdu for Roman Urdu, English for English), plain "
+    "text without LaTeX. All other text (title, headings, labels, notes, "
+    "points) must be short English. Be scientifically correct.\n"
+    "Example for 'Newton's first law':\n"
+    '{"kind":"forces","title":"Newton\'s First Law of Motion","panels":['
+    '{"heading":"1. Object at rest","block":"Book on table","arrows":['
+    '{"side":"up","label":"Normal force","length":"normal"},'
+    '{"side":"down","label":"Weight","length":"normal"}],'
+    '"note":"Forces are balanced (net force = 0), so the book stays at rest."},'
+    '{"heading":"2. Constant speed","block":"Car on straight road","arrows":['
+    '{"side":"right","label":"Driving force","length":"normal"},'
+    '{"side":"left","label":"Friction + air drag","length":"normal"},'
+    '{"side":"up","label":"Normal force","length":"normal"},'
+    '{"side":"down","label":"Weight","length":"normal"}],'
+    '"note":"Forces are balanced, so speed and direction do not change."},'
+    '{"heading":"3. Unbalanced force","block":"Ball","arrows":['
+    '{"side":"right","label":"Push","length":"long"},'
+    '{"side":"left","label":"Friction","length":"short"}],'
+    '"note":"Net force is not zero, so the ball accelerates."}],'
+    '"explanation":"..."}'
+)
 
 
-def generate_diagram(description):
-    """Asks the main model to draw a labelled diagram. Returns (svg, error)."""
-    system = (
-        "You are an expert at drawing clean, scientifically accurate, labelled "
-        "educational diagrams as SVG. Output ONLY one complete <svg> element, "
-        "nothing else: no markdown fences, no explanation. Rules: use "
-        'viewBox="0 0 800 600"; start with a white background <rect>; write all '
-        "text in English unless the request says otherwise; font-family Arial, "
-        "font-size 16 to 20, dark text; labels must be readable and must not "
-        "overlap each other; use simple shapes (circle, ellipse, rect, line, path, "
-        "polygon, text) and draw arrowheads with polygon; no scripts, no images, "
-        "no foreignObject, no external links; add a short title at the top; for "
-        "comparisons use two side-by-side panels with a heading each; keep the "
-        "whole SVG under 6000 characters."
+def wrap_lines(text, width, max_lines=3):
+    width = max(8, int(width))
+    lines = textwrap.wrap(str(text or "").strip(), width=width) or [""]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1][: max(1, width - 1)].rstrip(" .,;:") + "…"
+    return lines
+
+
+def svg_text(x, y, text, size=16, anchor="middle", weight="normal",
+             fill="#1f2937", style="normal", width=24, max_lines=3):
+    """Multi-line text. y is the baseline of the first line."""
+    out = ""
+    line_h = int(size * 1.3)
+    for index, line in enumerate(wrap_lines(text, width, max_lines)):
+        out += (
+            '<text x="%d" y="%d" font-family="Arial, Helvetica, sans-serif" '
+            'font-size="%d" text-anchor="%s" font-weight="%s" font-style="%s" '
+            'fill="%s">%s</text>'
+            % (x, y + index * line_h, size, anchor, weight, style, fill,
+               xml_escape(line))
+        )
+    return out
+
+
+def svg_text_v(x, cy, text, size=15, anchor="middle", weight="normal",
+               fill="#1f2937", style="normal", width=20, max_lines=2):
+    """Like svg_text, but vertically centred around cy."""
+    count = len(wrap_lines(text, width, max_lines))
+    line_h = int(size * 1.3)
+    y = cy - (count - 1) * line_h / 2 + size * 0.35
+    return svg_text(x, int(y), text, size, anchor, weight, fill, style, width, max_lines)
+
+
+def svg_frame(body, height, title):
+    head = svg_text(SVG_W // 2, 42, title, 24, "middle", "bold", width=48, max_lines=2)
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">'
+        '<defs><marker id="ah" markerUnits="userSpaceOnUse" markerWidth="16" '
+        'markerHeight="12" refX="15" refY="6" orient="auto">'
+        '<polygon points="0 0, 16 6, 0 12" fill="#1d4ed8"/></marker>'
+        '</defs><rect width="%d" height="%d" fill="#ffffff"/>%s%s</svg>'
+        % (SVG_W, height, SVG_W, height, head, body)
     )
-    last_error = "ڈایاگرام درست فارمیٹ میں نہیں بن سکا"
+
+
+def render_forces(spec):
+    side_len = {"short": 70, "normal": 110, "long": 150}
+    vert_len = {"short": 40, "normal": 60, "long": 80}
+    body = ""
+    panels = spec["panels"]
+    for index, panel in enumerate(panels):
+        top = 90 + index * ROW_H
+        cx, cy = 400, top + 160
+        if index:
+            body += (
+                '<line x1="30" y1="%d" x2="770" y2="%d" stroke="#e5e7eb" '
+                'stroke-width="2"/>' % (top - 12, top - 12)
+            )
+        body += svg_text(30, top + 22, panel["heading"], 18, "start", "bold",
+                         width=70, max_lines=1)
+        body += (
+            '<rect x="%d" y="%d" width="150" height="70" rx="8" fill="#e0e7ff" '
+            'stroke="#1f2937" stroke-width="2"/>' % (cx - 75, cy - 35)
+        )
+        body += svg_text_v(cx, cy, panel["block"], 16, "middle", "bold", width=16,
+                           max_lines=2)
+        for arrow in panel["arrows"]:
+            side, label = arrow["side"], arrow["label"]
+            if side in ("up", "down"):
+                length = vert_len[arrow["length"]]
+                y1 = cy - 35 if side == "up" else cy + 35
+                y2 = y1 - length if side == "up" else y1 + length
+                body += (
+                    '<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#1d4ed8" '
+                    'stroke-width="4" marker-end="url(#ah)"/>' % (cx, y1, cx, y2)
+                )
+                body += svg_text_v(cx + 14, (y1 + y2) // 2, label, 15, "start",
+                                   width=22, max_lines=2)
+            else:
+                length = side_len[arrow["length"]]
+                x1 = cx + 75 if side == "right" else cx - 75
+                x2 = x1 + length if side == "right" else x1 - length
+                body += (
+                    '<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="#1d4ed8" '
+                    'stroke-width="4" marker-end="url(#ah)"/>' % (x1, cy, x2, cy)
+                )
+                if side == "right":
+                    body += svg_text_v(x2 + 10, cy, label, 15, "start", width=18,
+                                       max_lines=3)
+                else:
+                    body += svg_text_v(x2 - 10, cy, label, 15, "end", width=18,
+                                       max_lines=3)
+        if panel.get("note"):
+            body += svg_text(400, top + 296, panel["note"], 15, "middle",
+                             style="italic", fill="#374151", width=88, max_lines=2)
+    return svg_frame(body, 90 + len(panels) * ROW_H, spec["title"])
+
+
+def render_atom(spec):
+    panels = spec["panels"]
+    count = len(panels)
+    panel_w = SVG_W / count
+    cy = 330
+    scales = []
+    for panel in panels:
+        r_max = 30 + 26 * len(panel["shells"])
+        scales.append(min(1.0, (panel_w - 40) / (2 * r_max)))
+    tallest = max((30 + 26 * len(p["shells"])) * s for p, s in zip(panels, scales))
+    body = ""
+    for index, (panel, scale) in enumerate(zip(panels, scales)):
+        cx = int(panel_w * (index + 0.5))
+        shells = panel["shells"]
+        electrons = sum(shells)
+        body += svg_text(cx, 100, panel["heading"], 18, "middle", "bold",
+                         width=int(panel_w / 10.5), max_lines=3)
+        for k, in_shell in enumerate(shells):
+            radius = (30 + 26 * (k + 1)) * scale
+            body += (
+                '<circle cx="%d" cy="%d" r="%.1f" fill="none" stroke="#9ca3af" '
+                'stroke-width="2"/>' % (cx, cy, radius)
+            )
+            for j in range(in_shell):
+                angle = 2 * math.pi * j / in_shell - math.pi / 2 + k * 0.35
+                body += (
+                    '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="#ef4444" '
+                    'stroke="#7f1d1d" stroke-width="1"/>'
+                    % (cx + radius * math.cos(angle), cy + radius * math.sin(angle),
+                       max(4.0, 6 * scale))
+                )
+        nucleus = max(17.0, 26 * scale)
+        body += (
+            '<circle cx="%d" cy="%d" r="%.1f" fill="#fbbf24" stroke="#92400e" '
+            'stroke-width="2"/>' % (cx, cy, nucleus)
+        )
+        font = int(max(11, 14 * max(scale, 0.8)))
+        body += svg_text(cx, cy - 2, "%dp" % panel["protons"], font, "middle", "bold")
+        body += svg_text(cx, cy + font, "%dn" % panel["neutrons"], font, "middle", "bold")
+        net = panel["protons"] - electrons
+        charge = "0 (neutral)" if net == 0 else ("%+d" % net)
+        below = int(cy + tallest + 36)
+        body += svg_text(cx, below, "Protons: %d   Electrons: %d" % (panel["protons"], electrons),
+                         15, "middle", width=int(panel_w / 8))
+        body += svg_text(cx, below + 24, "Net charge: " + charge, 16, "middle", "bold",
+                         fill="#b91c1c" if net else "#047857", width=int(panel_w / 8))
+        if panel.get("note"):
+            body += svg_text(cx, below + 56, panel["note"], 14, "middle", style="italic",
+                             fill="#374151", width=int(panel_w / 7.6), max_lines=3)
+    return svg_frame(body, int(cy + tallest + 36 + 56 + 70), spec["title"])
+
+
+def render_flow(spec):
+    steps = spec["steps"]
+    box_w, box_h, gap, x0 = 620, 84, 44, 90
+    y = 90
+    body = ""
+    for index, step in enumerate(steps):
+        body += (
+            '<rect x="%d" y="%d" width="%d" height="%d" rx="10" fill="#eff6ff" '
+            'stroke="#1d4ed8" stroke-width="2"/>' % (x0, y, box_w, box_h)
+        )
+        body += (
+            '<circle cx="%d" cy="%d" r="16" fill="#1d4ed8"/>' % (x0 + 32, y + box_h // 2)
+        )
+        body += svg_text(x0 + 32, y + box_h // 2 + 6, str(index + 1), 16, "middle",
+                         "bold", fill="#ffffff")
+        body += svg_text(x0 + 66, y + 30, step["title"], 17, "start", "bold", width=50,
+                         max_lines=1)
+        if step.get("detail"):
+            body += svg_text(x0 + 66, y + 54, step["detail"], 14, "start",
+                             fill="#374151", width=64, max_lines=2)
+        if index < len(steps) - 1:
+            body += (
+                '<line x1="400" y1="%d" x2="400" y2="%d" stroke="#1d4ed8" '
+                'stroke-width="4" marker-end="url(#ah)"/>'
+                % (y + box_h + 2, y + box_h + gap - 3)
+            )
+        y += box_h + gap
+    return svg_frame(body, y - gap + 40, spec["title"])
+
+
+def render_compare(spec):
+    columns = spec["columns"]
+    count = len(columns)
+    gap = 20
+    col_w = (740 - gap * (count - 1)) / count
+    chars = max(10, int(col_w / 8.4) - 3)
+    wrapped = [[wrap_lines(pt, chars, 5) for pt in col["points"]] for col in columns]
+    totals = [sum(len(lines) for lines in col) * 20 + len(col) * 10 for col in wrapped]
+    body_h = max(totals) + 24
+    colors = ["#dbeafe", "#fce7f3", "#dcfce7"]
+    body = ""
+    for index, col in enumerate(columns):
+        x = int(30 + index * (col_w + gap))
+        body += (
+            '<rect x="%d" y="90" width="%d" height="44" rx="8" fill="%s" '
+            'stroke="#1f2937" stroke-width="2"/>' % (x, col_w, colors[index % 3])
+        )
+        body += svg_text_v(x + col_w / 2, 112, col["heading"], 18, "middle", "bold",
+                           width=int(col_w / 10.5), max_lines=1)
+        body += (
+            '<rect x="%d" y="134" width="%d" height="%d" rx="8" fill="#ffffff" '
+            'stroke="#9ca3af" stroke-width="2"/>' % (x, col_w, body_h)
+        )
+        y = 162
+        for lines in wrapped[index]:
+            for n, line in enumerate(lines):
+                shown = ("• " + line) if n == 0 else line
+                body += svg_text(x + (12 if n == 0 else 23), y, shown, 15, "start",
+                                 width=chars + 8, max_lines=1)
+                y += 20
+            y += 10
+    return svg_frame(body, 134 + body_h + 30, spec["title"])
+
+
+def _text(value, limit=200):
+    return str(value or "").strip()[:limit]
+
+
+def parse_spec(raw):
+    """Turns the model's JSON into a safe, complete spec, or None if unusable."""
+    found = re.search(r"(?s)\{.*\}", raw or "")
+    if not found:
+        return None
+    try:
+        data = json.loads(found.group(0))
+        kind = _text(data.get("kind"), 20).lower()
+        if kind not in DIAGRAM_KINDS:
+            return None
+        spec = {
+            "kind": kind,
+            "title": _text(data.get("title"), 90) or "Diagram",
+            "explanation": _text(data.get("explanation"), 2500),
+        }
+        if kind == "forces":
+            panels = []
+            for p in data["panels"][:3]:
+                used, arrows = set(), []
+                for a in p["arrows"]:
+                    side = _text(a.get("side"), 10).lower()
+                    if side not in ("up", "down", "left", "right") or side in used:
+                        continue
+                    used.add(side)
+                    length = _text(a.get("length"), 10).lower()
+                    arrows.append({
+                        "side": side,
+                        "label": _text(a.get("label"), 60),
+                        "length": length if length in ("short", "normal", "long") else "normal",
+                    })
+                if not arrows:
+                    return None
+                panels.append({
+                    "heading": _text(p.get("heading"), 90),
+                    "block": _text(p.get("block"), 40) or "Object",
+                    "arrows": arrows,
+                    "note": _text(p.get("note"), 180),
+                })
+            spec["panels"] = panels
+        elif kind == "atom":
+            panels = []
+            for p in data["panels"][:3]:
+                shells = [int(n) for n in p["shells"]][:5]
+                protons, neutrons = int(p["protons"]), int(p.get("neutrons", 0))
+                if not (1 <= protons <= 118 and 0 <= neutrons <= 200):
+                    return None
+                if not shells or any(n < 0 or n > 32 for n in shells) or sum(shells) > 130:
+                    return None
+                panels.append({
+                    "heading": _text(p.get("heading"), 80),
+                    "protons": protons, "neutrons": neutrons, "shells": shells,
+                    "note": _text(p.get("note"), 160),
+                })
+            spec["panels"] = panels
+        elif kind == "flow":
+            steps = [
+                {"title": _text(s.get("title"), 50), "detail": _text(s.get("detail"), 140)}
+                for s in data["steps"][:8]
+            ]
+            if len(steps) < 2:
+                return None
+            spec["steps"] = steps
+        else:
+            columns = []
+            for c in data["columns"][:3]:
+                points = [_text(t, 140) for t in c["points"][:8] if _text(t)]
+                if not points:
+                    return None
+                columns.append({"heading": _text(c.get("heading"), 40), "points": points})
+            if len(columns) < 2:
+                return None
+            spec["columns"] = columns
+        if not spec.get("panels") and not spec.get("steps") and not spec.get("columns"):
+            return None
+        return spec
+    except Exception:
+        return None
+
+
+def render_spec(spec):
+    kind = spec["kind"]
+    if kind == "forces":
+        return render_forces(spec)
+    if kind == "atom":
+        return render_atom(spec)
+    if kind == "flow":
+        return render_flow(spec)
+    return render_compare(spec)
+
+
+def svg_is_valid(svg):
+    try:
+        return ET.fromstring(svg).tag.endswith("svg")
+    except ET.ParseError:
+        return False
+
+
+def generate_diagram(description, user_text=""):
+    """The model writes the content, the app draws it. Returns (svg, explanation, error)."""
+    last_error = "ڈایاگرام کا مواد درست فارمیٹ میں نہیں ملا"
     for attempt in range(2):
         try:
             raw = ask_model(
                 [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": description},
+                    {"role": "system", "content": DIAGRAM_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": "Diagram request: " + description
+                        + "\nUser's original message (write the explanation in "
+                        "its language): " + (user_text or "")[:300],
+                    },
                 ]
             )
         except Exception as error:
-            return None, str(error)[:150]
-        svg = clean_svg(raw)
-        if svg:
-            return svg, ""
-    return None, last_error
+            return None, "", str(error)[:150]
+        spec = parse_spec(raw)
+        if spec:
+            svg = render_spec(spec)
+            if svg_is_valid(svg):
+                return svg, spec["explanation"], ""
+    return None, "", last_error
 
 
 def show_svg(svg, key):
@@ -1100,7 +1436,7 @@ def transcribe(audio_bytes):
     return text
 
 
-def show_message(role, text, image=None, key=0, svg=None):
+def show_message(role, text, image=None, key=0, svg=None, explanation=None):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
@@ -1112,6 +1448,8 @@ def show_message(role, text, image=None, key=0, svg=None):
         elif svg:
             show_svg(svg, key)
             st.caption(text)
+            if explanation:
+                st.markdown(explanation)
         elif image:
             st.image(image)
             st.caption(text)
@@ -1140,6 +1478,7 @@ for index, message in enumerate(st.session_state.messages):
         message.get("image"),
         index,
         message.get("svg"),
+        message.get("explanation"),
     )
 
 prompt = st.chat_input("Ask Quantum", accept_audio=True)
@@ -1172,11 +1511,12 @@ if prompt:
         with st.chat_message("assistant", avatar=BOT_AVATAR):
             with st.spinner("🎨 تصویر بن رہی ہے..."):
                 kind, plan = make_image_plan(st.session_state.messages)
-                img, svg, img_err = None, None, ""
+                img, svg, img_err, expl = None, None, "", ""
                 if kind == "PICTURE":
                     img, img_err = generate_image(plan)
                 elif kind == "DIAGRAM":
-                    svg, img_err = generate_diagram(plan)
+                    svg, expl, img_err = generate_diagram(plan, user_text)
+                    expl = fix_math(expl) if expl else ""
             slot = len(st.session_state.messages)
             if kind == "REFUSE":
                 st.warning("معذرت، اس قسم کی تصویر نہیں بنائی جا سکتی۔")
@@ -1197,11 +1537,14 @@ if prompt:
             elif svg:
                 show_svg(svg, slot)
                 st.caption("📊 " + plan)
+                if expl:
+                    st.markdown(expl)
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
                         "content": "📊 [Diagram generated] " + plan,
                         "svg": svg,
+                        "explanation": expl,
                     }
                 )
                 st.stop()
