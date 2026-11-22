@@ -643,6 +643,27 @@ def make_image_prompt(history):
     return text[:400]
 
 
+def image_download_button(image, key):
+    """Shows a download button for generated image bytes."""
+    if image[:4] == b"\x89PNG":
+        ext, mime = "png", "image/png"
+    elif image[8:12] == b"WEBP":
+        ext, mime = "webp", "image/webp"
+    else:
+        ext, mime = "jpg", "image/jpeg"
+    options = dict(
+        label="⬇️ Download image",
+        data=image,
+        file_name="quantum_ai_image." + ext,
+        mime=mime,
+        key="dl_" + str(key),
+    )
+    try:
+        st.download_button(on_click="ignore", **options)
+    except TypeError:
+        st.download_button(**options)
+
+
 def generate_image(prompt):
     """Returns (image_bytes, error)."""
     seed = str(random.randint(1, 10**6))
@@ -922,7 +943,7 @@ def transcribe(audio_bytes):
     return text
 
 
-def show_message(role, text, image=None):
+def show_message(role, text, image=None, key=0):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
@@ -934,6 +955,7 @@ def show_message(role, text, image=None):
         elif image:
             st.image(image)
             st.caption(text)
+            image_download_button(image, key)
         else:
             st.markdown(text)
 
@@ -951,8 +973,10 @@ else:
         unsafe_allow_html=True,
     )
 
-for message in st.session_state.messages:
-    show_message(message["role"], message["content"], message.get("image"))
+for index, message in enumerate(st.session_state.messages):
+    show_message(
+        message["role"], message["content"], message.get("image"), index
+    )
 
 prompt = st.chat_input("Ask Quantum", accept_audio=True)
 
@@ -994,6 +1018,7 @@ if prompt:
             elif img:
                 st.image(img)
                 st.caption("🎨 " + img_prompt)
+                image_download_button(img, len(st.session_state.messages))
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
