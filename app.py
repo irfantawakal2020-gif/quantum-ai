@@ -636,6 +636,26 @@ REFUSAL_LIKE = re.compile(
 )
 
 
+TEACH_WORDS = re.compile(
+    r"(?i)\b(explain|explanation|understand|teach|law|laws|theory|concept|principle|"
+    r"formula|process|cycle|structure|working|how does|how do|difference|differences|"
+    r"compare|comparison|versus|vs|samjh\w*|samajh\w*|qanoon|farq|nizam)\b"
+    r"|سمجھ|وضاحت|قانون|فرق|اصول|نظریہ|समझ|नियम|फर्क|अंतर|सिद्धांत"
+)
+ART_WORDS = re.compile(
+    r"(?i)\b(cartoon|anime|portrait|logo|poster|wallpaper|landscape|painting|"
+    r"realistic|photorealistic|face|faces|chehra|funny|cute|fantasy|sunset)\b"
+    r"|چہرہ|कार्टून|चेहरा"
+)
+
+
+def route_override(kind, plan, last):
+    """Pictures cannot write correct text, so teaching requests become diagrams."""
+    if kind == "PICTURE" and TEACH_WORDS.search(last) and not ART_WORDS.search(last):
+        return "DIAGRAM", last[:300]
+    return kind, plan
+
+
 def last_image_request(history):
     """The description of the most recent picture or diagram made in this chat."""
     for message in reversed(history[:-1]):
@@ -691,7 +711,14 @@ def make_image_plan(history):
                         "Rules: Use DIAGRAM for science, maths, geography, "
                         "biology, chemistry or physics concepts, charts, "
                         "flowcharts, structures, comparisons and labelled "
-                        "figures. Use PICTURE for artistic or photographic "
+                        "figures. If the image is meant to EXPLAIN or TEACH "
+                        "anything (a law, concept, process, how something "
+                        "works, any school subject), use DIAGRAM even if the "
+                        "user says 'picture' or 'tasveer', because picture "
+                        "generators cannot write correct text. Use PICTURE only "
+                        "for artistic, imaginary or photographic images: animals, "
+                        "people, faces, scenes, logos, cartoons, posters. Use "
+                        "PICTURE for artistic or photographic "
                         "images. Drawing people or faces is allowed: never "
                         "refuse just because a person or face is in the image. "
                         "If the user wants a chart or graph of real-world data "
@@ -712,6 +739,8 @@ def make_image_plan(history):
                         "side by side comparison of a neutral atom and an ion, "
                         "showing nucleus, protons, neutrons and electrons with "
                         "charges labelled\n"
+                        "'newton ka pehla qanoon tasveer se samjhao' -> DIAGRAM: "
+                        "Newton's first law with balanced and unbalanced forces\n"
                         "'photo edit kaise karte hain' -> NO"
                     ),
                 },
@@ -720,8 +749,11 @@ def make_image_plan(history):
             max_tokens=400,
         )
     except Exception:
-        return ("PICTURE", last[:300]) if IMAGE_VERBS.search(last) else ("", "")
-    return parse_plan(text, last)
+        if IMAGE_VERBS.search(last):
+            return route_override("PICTURE", last[:300], last)
+        return "", ""
+    kind, plan = parse_plan(text, last)
+    return route_override(kind, plan, last)
 
 
 # ---------- Diagrams: the model writes the CONTENT, this code does the drawing ----------
@@ -1160,7 +1192,9 @@ def image_download_button(image, key):
 def generate_image(prompt):
     """Returns (image_bytes, error)."""
     seed = str(random.randint(1, 10**6))
-    quoted = urllib.parse.quote(prompt)
+    quoted = urllib.parse.quote(
+        prompt[:380] + ", no text, no letters, no words, no captions"
+    )
     attempts = []
     if POLLI_KEY:
         attempts.append((
