@@ -759,7 +759,7 @@ def make_image_plan(history):
 # ---------- Diagrams: the model writes the CONTENT, this code does the drawing ----------
 SVG_W = 800
 ROW_H = 335
-DIAGRAM_KINDS = ("forces", "atom", "flow", "compare")
+DIAGRAM_KINDS = ("forces", "atom", "flow", "compare", "illustrated")
 
 DIAGRAM_SYSTEM = (
     "You design educational diagrams. You do NOT draw: you only describe the "
@@ -780,11 +780,17 @@ DIAGRAM_SYSTEM = (
     "4) compare: comparisons and concept summaries. Fields: kind, title, columns "
     "(2 or 3), each column: heading (max 3 words), points (3 to 6 short points, "
     "max 14 words each).\n"
-    "Always add 'explanation': 4 to 7 clear sentences explaining the topic, in "
-    "the same language and script as the user's original message (Urdu script "
-    "for Urdu or Hindi, Roman Urdu for Roman Urdu, English for English), plain "
-    "text without LaTeX. All other text (title, headings, labels, notes, "
-    "points) must be short English. Be scientifically correct.\n"
+    "5) illustrated: a real-world setup, apparatus, organ, plant, machine or "
+    "place whose parts must be shown and explained (for example a chemistry "
+    "lab setup, a human heart, a microscope). Fields: kind, title, scene (an "
+    "English prompt for an AI picture generator that describes ONLY what to "
+    "see: objects, layout, style; NO text, labels or letters), items (3 to 8), "
+    "each item: name (max 4 words), detail (max 14 words).\n"
+    "Always add 'explanation': a clear explanatory paragraph in ENGLISH, 7 to "
+    "10 sentences (about 110 to 170 words), with the key ideas, causes and a "
+    "real-world example. It is written INSIDE the picture. Plain text, no "
+    "LaTeX, no bullet points. All other text (title, headings, labels, notes, "
+    "points) must also be short English. Be scientifically correct.\n"
     "Example for 'Newton's first law':\n"
     '{"kind":"forces","title":"Newton\'s First Law of Motion","panels":['
     '{"heading":"1. Object at rest","block":"Book on table","arrows":['
@@ -839,15 +845,28 @@ def svg_text_v(x, cy, text, size=15, anchor="middle", weight="normal",
     return svg_text(x, int(y), text, size, anchor, weight, fill, style, width, max_lines)
 
 
-def svg_frame(body, height, title):
+def svg_frame(body, height, title, explanation=""):
     head = svg_text(SVG_W // 2, 42, title, 24, "middle", "bold", width=48, max_lines=2)
+    extra = ""
+    total = height
+    if explanation:
+        lines = wrap_lines(explanation, 94, 22)
+        box_h = 62 + len(lines) * 19 + 14
+        top = height + 6
+        extra = (
+            '<rect x="30" y="%d" width="740" height="%d" rx="10" fill="#f8fafc" '
+            'stroke="#cbd5e1" stroke-width="2"/>' % (top, box_h)
+        )
+        extra += svg_text(46, top + 32, "Explanation", 17, "start", "bold")
+        extra += svg_text(46, top + 60, explanation, 15, "start", width=94, max_lines=22)
+        total = top + box_h + 24
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">'
         '<defs><marker id="ah" markerUnits="userSpaceOnUse" markerWidth="16" '
         'markerHeight="12" refX="15" refY="6" orient="auto">'
         '<polygon points="0 0, 16 6, 0 12" fill="#1d4ed8"/></marker>'
-        '</defs><rect width="%d" height="%d" fill="#ffffff"/>%s%s</svg>'
-        % (SVG_W, height, SVG_W, height, head, body)
+        '</defs><rect width="%d" height="%d" fill="#ffffff"/>%s%s%s</svg>'
+        % (SVG_W, total, SVG_W, total, head, body, extra)
     )
 
 
@@ -901,7 +920,7 @@ def render_forces(spec):
         if panel.get("note"):
             body += svg_text(400, top + 296, panel["note"], 15, "middle",
                              style="italic", fill="#374151", width=88, max_lines=2)
-    return svg_frame(body, 90 + len(panels) * ROW_H, spec["title"])
+    return svg_frame(body, 90 + len(panels) * ROW_H, spec["title"], spec.get("explanation", ""))
 
 
 def render_atom(spec):
@@ -953,7 +972,7 @@ def render_atom(spec):
         if panel.get("note"):
             body += svg_text(cx, below + 56, panel["note"], 14, "middle", style="italic",
                              fill="#374151", width=int(panel_w / 7.6), max_lines=3)
-    return svg_frame(body, int(cy + tallest + 36 + 56 + 70), spec["title"])
+    return svg_frame(body, int(cy + tallest + 36 + 56 + 70), spec["title"], spec.get("explanation", ""))
 
 
 def render_flow(spec):
@@ -983,7 +1002,7 @@ def render_flow(spec):
                 % (y + box_h + 2, y + box_h + gap - 3)
             )
         y += box_h + gap
-    return svg_frame(body, y - gap + 40, spec["title"])
+    return svg_frame(body, y - gap + 40, spec["title"], spec.get("explanation", ""))
 
 
 def render_compare(spec):
@@ -1017,7 +1036,7 @@ def render_compare(spec):
                                  width=chars + 8, max_lines=1)
                 y += 20
             y += 10
-    return svg_frame(body, 134 + body_h + 30, spec["title"])
+    return svg_frame(body, 134 + body_h + 30, spec["title"], spec.get("explanation", ""))
 
 
 def _text(value, limit=200):
@@ -1086,6 +1105,15 @@ def parse_spec(raw):
             if len(steps) < 2:
                 return None
             spec["steps"] = steps
+        elif kind == "illustrated":
+            items = [
+                {"name": _text(i.get("name"), 50), "detail": _text(i.get("detail"), 140)}
+                for i in data["items"][:8] if _text(i.get("name"))
+            ]
+            scene = _text(data.get("scene"), 500)
+            if len(items) < 2 or not scene:
+                return None
+            spec["scene"], spec["items"] = scene, items
         else:
             columns = []
             for c in data["columns"][:3]:
@@ -1096,11 +1124,64 @@ def parse_spec(raw):
             if len(columns) < 2:
                 return None
             spec["columns"] = columns
-        if not spec.get("panels") and not spec.get("steps") and not spec.get("columns"):
+        if not any(spec.get(k) for k in ("panels", "steps", "columns", "items")):
             return None
         return spec
     except Exception:
         return None
+
+
+def image_mime(data):
+    if data[:4] == b"\x89PNG":
+        return "image/png"
+    if data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def render_illustrated(spec, image):
+    """A generated picture, then the list of parts, then the explanation."""
+    pic = 520
+    x0 = (SVG_W - pic) // 2
+    top = 90
+    encoded = base64.b64encode(image).decode()
+    body = (
+        '<rect x="%d" y="%d" width="%d" height="%d" rx="6" fill="#f3f4f6" '
+        'stroke="#1f2937" stroke-width="2"/>' % (x0 - 4, top - 4, pic + 8, pic + 8)
+    )
+    body += (
+        '<image x="%d" y="%d" width="%d" height="%d" '
+        'preserveAspectRatio="xMidYMid slice" href="data:%s;base64,%s"/>'
+        % (x0, top, pic, pic, image_mime(image), encoded)
+    )
+    y = top + pic + 46
+    body += svg_text(30, y, "Parts and their roles", 17, "start", "bold")
+    y += 16
+    for index, item in enumerate(spec["items"]):
+        name_lines = wrap_lines(item["name"], 22, 2)
+        detail_lines = wrap_lines(item["detail"], 62, 3)
+        row_h = max(len(name_lines), len(detail_lines)) * 19 + 12
+        body += (
+            '<rect x="30" y="%d" width="740" height="%d" fill="%s"/>'
+            % (y, row_h, "#eff6ff" if index % 2 == 0 else "#ffffff")
+        )
+        body += svg_text(44, y + 20, item["name"], 15, "start", "bold", width=22, max_lines=2)
+        body += svg_text(260, y + 20, item["detail"], 15, "start", width=62, max_lines=3)
+        y += row_h
+    return svg_frame(body, y + 24, spec["title"], spec.get("explanation", ""))
+
+
+def illustrated_as_table(spec):
+    """If the picture cannot be made, show the parts as a table instead."""
+    return {
+        "kind": "compare",
+        "title": spec["title"],
+        "explanation": spec.get("explanation", ""),
+        "columns": [
+            {"heading": "Part", "points": [i["name"] for i in spec["items"]]},
+            {"heading": "Role", "points": [i["detail"] or "-" for i in spec["items"]]},
+        ],
+    }
 
 
 def render_spec(spec):
@@ -1132,8 +1213,7 @@ def generate_diagram(description, user_text=""):
                     {
                         "role": "user",
                         "content": "Diagram request: " + description
-                        + "\nUser's original message (write the explanation in "
-                        "its language): " + (user_text or "")[:300],
+                        + "\nUser's original message: " + (user_text or "")[:300],
                     },
                 ]
             )
@@ -1141,9 +1221,19 @@ def generate_diagram(description, user_text=""):
             return None, "", str(error)[:150]
         spec = parse_spec(raw)
         if spec:
-            svg = render_spec(spec)
+            if spec["kind"] == "illustrated":
+                image, _ = generate_image(
+                    spec["scene"] + ", clean educational illustration, white background"
+                )
+                svg = (
+                    render_illustrated(spec, image)
+                    if image
+                    else render_spec(illustrated_as_table(spec))
+                )
+            else:
+                svg = render_spec(spec)
             if svg_is_valid(svg):
-                return svg, spec["explanation"], ""
+                return svg, "", ""
     return None, "", last_error
 
 
@@ -1481,7 +1571,6 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None):
                     st.markdown(":green[" + safe_line + "]")
         elif svg:
             show_svg(svg, key)
-            st.caption(text)
             if explanation:
                 st.markdown(explanation)
         elif image:
@@ -1570,7 +1659,6 @@ if prompt:
                 st.stop()
             elif svg:
                 show_svg(svg, slot)
-                st.caption("📊 " + plan)
                 if expl:
                     st.markdown(expl)
                 st.session_state.messages.append(
