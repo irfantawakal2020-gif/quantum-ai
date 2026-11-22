@@ -9,6 +9,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 
 from openai import OpenAI
 from tavily import TavilyClient
@@ -252,7 +253,9 @@ system_text = (
     "Keep answers simple and polite. "
     "You can also create pictures: when the user asks for an image, the app "
     "generates it for them. Never say that you cannot create images. If the "
-    "request for a picture is unclear, ask what they want in it. "
+    "request for a picture is unclear, ask what they want in it. Drawing "
+    "people or faces is allowed, so never say that you cannot draw faces. The "
+    "app can also draw labelled science diagrams. "
     + MATH_RULES
 )
 
@@ -575,8 +578,9 @@ POLLI_KEY = st.secrets.get("POLLINATIONS_API_KEY")
 
 IMAGE_NOUNS = re.compile(
     r"\b(image|images|picture|pictures|photo|photos|pic|pics|logo|painting|"
-    r"drawing|sketch|wallpaper|poster|tasveer|tasweer|tasvir)\b"
-    r"|تصویر|فوٹو|तस्वीर|फोटो|चित्र",
+    r"drawing|sketch|wallpaper|poster|tasveer|tasweer|tasvir|face|faces|chehra|"
+    r"diagram|diagrams|flowchart|illustration)\b"
+    r"|تصویر|فوٹو|چہرہ|ڈایاگرام|ڈائیگرام|خاکہ|तस्वीर|फोटो|चित्र|चेहरा|आरेख",
     re.I,
 )
 IMAGE_VERBS = re.compile(
@@ -600,47 +604,176 @@ def is_image_request(text):
     return bool(IMAGE_NOUNS.search(text) or DRAW_WORDS.search(text))
 
 
-def make_image_prompt(history):
-    """Returns an English image prompt, 'REFUSE', or '' (not an image request)."""
+REFUSAL_LIKE = re.compile(
+    r"(?i)^(i'?m sorry|i am sorry|sorry|i can'?t|i cannot|i am unable|i'?m unable|as an ai)"
+)
+
+
+def last_image_request(history):
+    """The description of the most recent picture or diagram made in this chat."""
+    for message in reversed(history[:-1]):
+        content = message["content"]
+        if message["role"] == "assistant" and (
+            "[Image generated]" in content or "[Diagram generated]" in content
+        ):
+            return content.split("]", 1)[1].strip()[:300]
+    return ""
+
+
+def parse_plan(text, last):
+    """Returns (kind, text). kind: PICTURE, DIAGRAM, REFUSE or '' (not a request)."""
+    text = (text or "").strip().strip('"').strip()
+    upper = text.upper()
+    if not text or upper.rstrip(".!") == "NO":
+        return "", ""
+    if upper.startswith("REFUSE"):
+        return "REFUSE", ""
+    found = re.match(r"(?is)^\s*(PICTURE|DIAGRAM)\s*[:\-]\s*(.+)$", text)
+    if found:
+        return found.group(1).upper(), found.group(2).strip()[:500]
+    if REFUSAL_LIKE.match(text):
+        return "PICTURE", last[:300]
+    return "PICTURE", text[:400]
+
+
+def make_image_plan(history):
+    """Decides what to make. Returns (kind, text) as in parse_plan."""
     last = history[-1]["content"] if history else ""
-    convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-4:])
+    previous = last_image_request(history) if len(last) <= 60 else ""
+    content = ""
+    if previous:
+        content += "Previous image request: " + previous + "\n"
+    content += "Last message: " + last[:400]
     try:
         text = ask_small(
             [
                 {
                     "role": "system",
                     "content": (
-                        "Turn the user's LAST message into ONE English prompt for "
-                        "an AI image generator (maximum 45 words): describe the "
-                        "subject, style, colors and lighting. Translate Urdu, "
-                        "Roman Urdu or Hindi into English. If the user is changing "
-                        "an earlier image, combine it with that earlier idea. Do "
-                        "not ask for any written text inside the image. "
-                        "If the message is NOT asking to create an image, reply "
-                        "exactly: NO. "
-                        "If it asks for sexual content, graphic violence or gore, "
-                        "hateful content, or harmful images of real people, reply "
-                        "exactly: REFUSE. "
-                        "Examples: 'shair ki tasveer banao' -> a majestic lion "
-                        "standing on a rock at golden hour, photorealistic; "
-                        "'mujhe billi ki photo chahiye' -> a cute fluffy cat, "
-                        "soft light, detailed; 'photo edit kaise karte hain' -> NO; "
-                        "'تصویر کیا ہوتی ہے' -> NO. "
-                        "Output only the prompt, the word NO, or the word REFUSE."
+                        "Decide what the user's LAST message wants. Reply in "
+                        "exactly one of these forms:\n"
+                        "PICTURE: <English prompt for an AI image generator, "
+                        "maximum 45 words: subject, style, colors, lighting>\n"
+                        "DIAGRAM: <English description of the labelled "
+                        "educational diagram to draw: what to show, which labels, "
+                        "what to compare>\n"
+                        "NO  (the message is not a request to create an image)\n"
+                        "REFUSE  (only for sexual content, graphic violence or "
+                        "gore, hateful content, or harmful or deceptive images "
+                        "of real people)\n"
+                        "Rules: Use DIAGRAM for science, maths, geography, "
+                        "biology, chemistry or physics concepts, charts, "
+                        "flowcharts, structures, comparisons and labelled "
+                        "figures. Use PICTURE for artistic or photographic "
+                        "images. Drawing people or faces is allowed: never "
+                        "refuse just because a person or face is in the image. "
+                        "If the user wants a chart or graph of real-world data "
+                        "or statistics (prices, populations, results), reply NO, "
+                        "because the data would be invented. "
+                        "Base your answer on the LAST message only. Use the "
+                        "previous image request ONLY if the last message clearly "
+                        "refers to it (it, this, same, change, make it...). Never "
+                        "bring in unrelated topics. Translate Urdu, Roman Urdu or "
+                        "Hindi into English. If the user wants English labels, "
+                        "keep the labels in English.\n"
+                        "Examples:\n"
+                        "'shair ki tasveer banao' -> PICTURE: a majestic lion on "
+                        "a rock at golden hour, photorealistic\n"
+                        "'ek boorhe aadmi ka chehra banao' -> PICTURE: portrait "
+                        "of an elderly man with kind eyes, soft light, detailed\n"
+                        "'atom aur ion ka farq tasveer mein samjhao' -> DIAGRAM: "
+                        "side by side comparison of a neutral atom and an ion, "
+                        "showing nucleus, protons, neutrons and electrons with "
+                        "charges labelled\n"
+                        "'photo edit kaise karte hain' -> NO"
                     ),
                 },
-                {"role": "user", "content": convo},
+                {"role": "user", "content": content},
             ],
-            max_tokens=300,
+            max_tokens=400,
         )
     except Exception:
-        return last[:300] if IMAGE_VERBS.search(last) else ""
-    text = (text or "").strip().strip('"').strip()
-    if text.upper().rstrip(".!") == "REFUSE":
-        return "REFUSE"
-    if not text or text.upper().rstrip(".!") == "NO":
+        return ("PICTURE", last[:300]) if IMAGE_VERBS.search(last) else ("", "")
+    return parse_plan(text, last)
+
+
+def clean_svg(raw):
+    """Returns a safe, valid SVG string, or '' if the text is not usable."""
+    found = re.search(r"(?is)<svg\b.*</svg>", raw or "")
+    if not found:
         return ""
-    return text[:400]
+    svg = found.group(0)
+    if "xmlns=" not in svg[:300]:
+        svg = svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"', 1)
+    check = svg.replace("http://www.w3.org/2000/svg", "")
+    check = check.replace("http://www.w3.org/1999/xlink", "")
+    if re.search(
+        r"(?i)https?://|<script|<foreignobject|<image|<iframe|javascript:|\son\w+\s*=",
+        check,
+    ):
+        return ""
+    if len(svg) > 40000:
+        return ""
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return ""
+    if not root.tag.endswith("svg"):
+        return ""
+    return svg
+
+
+def generate_diagram(description):
+    """Asks the main model to draw a labelled diagram. Returns (svg, error)."""
+    system = (
+        "You are an expert at drawing clean, scientifically accurate, labelled "
+        "educational diagrams as SVG. Output ONLY one complete <svg> element, "
+        "nothing else: no markdown fences, no explanation. Rules: use "
+        'viewBox="0 0 800 600"; start with a white background <rect>; write all '
+        "text in English unless the request says otherwise; font-family Arial, "
+        "font-size 16 to 20, dark text; labels must be readable and must not "
+        "overlap each other; use simple shapes (circle, ellipse, rect, line, path, "
+        "polygon, text) and draw arrowheads with polygon; no scripts, no images, "
+        "no foreignObject, no external links; add a short title at the top; for "
+        "comparisons use two side-by-side panels with a heading each; keep the "
+        "whole SVG under 6000 characters."
+    )
+    last_error = "ڈایاگرام درست فارمیٹ میں نہیں بن سکا"
+    for attempt in range(2):
+        try:
+            raw = ask_model(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": description},
+                ]
+            )
+        except Exception as error:
+            return None, str(error)[:150]
+        svg = clean_svg(raw)
+        if svg:
+            return svg, ""
+    return None, last_error
+
+
+def show_svg(svg, key):
+    """Shows an SVG diagram and its download button."""
+    encoded = base64.b64encode(svg.encode("utf-8")).decode()
+    st.markdown(
+        '<img src="data:image/svg+xml;base64,' + encoded + '" '
+        'style="width:100%;background:#fff;border-radius:12px;">',
+        unsafe_allow_html=True,
+    )
+    options = dict(
+        label="⬇️ Download diagram (SVG)",
+        data=svg,
+        file_name="quantum_ai_diagram.svg",
+        mime="image/svg+xml",
+        key="dl_" + str(key),
+    )
+    try:
+        st.download_button(on_click="ignore", **options)
+    except TypeError:
+        st.download_button(**options)
 
 
 def image_download_button(image, key):
@@ -943,7 +1076,7 @@ def transcribe(audio_bytes):
     return text
 
 
-def show_message(role, text, image=None, key=0):
+def show_message(role, text, image=None, key=0, svg=None):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
@@ -952,6 +1085,9 @@ def show_message(role, text, image=None, key=0):
                 if line.strip():
                     safe_line = line.replace("]", "\\]")
                     st.markdown(":green[" + safe_line + "]")
+        elif svg:
+            show_svg(svg, key)
+            st.caption(text)
         elif image:
             st.image(image)
             st.caption(text)
@@ -975,7 +1111,11 @@ else:
 
 for index, message in enumerate(st.session_state.messages):
     show_message(
-        message["role"], message["content"], message.get("image"), index
+        message["role"],
+        message["content"],
+        message.get("image"),
+        index,
+        message.get("svg"),
     )
 
 prompt = st.chat_input("Ask Quantum", accept_audio=True)
@@ -1007,31 +1147,45 @@ if prompt:
     if is_image_request(user_text) and not find_youtube_id(user_text):
         with st.chat_message("assistant", avatar=BOT_AVATAR):
             with st.spinner("🎨 تصویر بن رہی ہے..."):
-                img_prompt = make_image_prompt(st.session_state.messages)
-                img, img_err = (None, "")
-                if img_prompt and img_prompt != "REFUSE":
-                    img, img_err = generate_image(img_prompt)
-            if img_prompt == "REFUSE":
+                kind, plan = make_image_plan(st.session_state.messages)
+                img, svg, img_err = None, None, ""
+                if kind == "PICTURE":
+                    img, img_err = generate_image(plan)
+                elif kind == "DIAGRAM":
+                    svg, img_err = generate_diagram(plan)
+            slot = len(st.session_state.messages)
+            if kind == "REFUSE":
                 st.warning("معذرت، اس قسم کی تصویر نہیں بنائی جا سکتی۔")
                 st.session_state.messages.pop()
                 st.stop()
             elif img:
                 st.image(img)
-                st.caption("🎨 " + img_prompt)
-                image_download_button(img, len(st.session_state.messages))
+                st.caption("🎨 " + plan)
+                image_download_button(img, slot)
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
-                        "content": "🎨 [Image generated] " + img_prompt,
+                        "content": "🎨 [Image generated] " + plan,
                         "image": img,
                     }
                 )
                 st.stop()
-            elif img_prompt:
+            elif svg:
+                show_svg(svg, slot)
+                st.caption("📊 " + plan)
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "📊 [Diagram generated] " + plan,
+                        "svg": svg,
+                    }
+                )
+                st.stop()
+            elif kind:
                 st.error("⚠️ تصویر نہیں بن سکی: " + img_err)
                 st.session_state.messages.pop()
                 st.stop()
-            # not an image request after all: continue with the normal answer
+            # kind == "": not an image request after all, continue normally
 
     recent = st.session_state.messages[-MAX_HISTORY:]
 
