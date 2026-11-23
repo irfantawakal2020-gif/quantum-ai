@@ -283,6 +283,14 @@ system_text = (
     "reply in Urdu script and never use Devanagari. "
     "Never mix scripts in one reply. "
     "Never reply in any language other than English, Urdu or Roman Urdu. "
+    "SPELLING: write every word with correct, standard spelling. In Urdu script "
+    "use standard Pakistani Urdu spelling, as in Urdu newspapers and Urdu "
+    "dictionaries, never Hindi or Arabic spellings, and never drop, add or swap "
+    "letters. Write names of people and places with care; if you are not sure "
+    "how a name is spelled in Urdu, write it in English letters instead of "
+    "guessing. In Roman Urdu use the common simple spellings consistently, for "
+    "example: hai, nahi, kyun, kaise, aap, tafseel. Reread your answer once "
+    "before sending it and fix any spelling mistake. "
     "By default keep answers short and to the point, about 2 to 5 sentences. "
     "BUT whenever the user asks for details, a detailed or full explanation, an "
     "explanation of a difference or comparison, a summary of a topic, or uses "
@@ -1479,6 +1487,7 @@ def ask_once(messages, model=None):
         result = client.chat.completions.create(
             model=model,
             messages=messages,
+            temperature=0.4,
             extra_body={"reasoning_effort": "low"},
         )
     except Exception as error:
@@ -1487,6 +1496,7 @@ def ask_once(messages, model=None):
         result = client.chat.completions.create(
             model=model,
             messages=messages,
+            temperature=0.4,
         )
     return result.choices[0].message.content or ""
 
@@ -1525,6 +1535,7 @@ def ask_small(messages, max_tokens=600):
                 model=SMALL_MODEL,
                 messages=messages,
                 max_tokens=max_tokens,
+                temperature=0.2,
                 extra_body={"reasoning_effort": "low"},
             )
         except Exception as error:
@@ -1534,6 +1545,7 @@ def ask_small(messages, max_tokens=600):
                 model=SMALL_MODEL,
                 messages=messages,
                 max_tokens=max_tokens,
+                temperature=0.2,
             )
         return result.choices[0].message.content or ""
     except Exception as error:
@@ -1554,6 +1566,7 @@ def to_urdu_script(text):
     try:
         result = client.chat.completions.create(
             model=MODEL_NAME,
+            temperature=0.2,
             messages=[
                 {
                     "role": "system",
