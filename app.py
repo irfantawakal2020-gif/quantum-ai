@@ -334,7 +334,8 @@ SEARCH_WORDS = [
     "صدر", "وزیراعظم", "وزیر اعظم", "وزیر", "آج", "تازہ", "موجودہ", "خبر",
     "قیمت", "ڈالر", "سونا", "میچ", "انتخاب",
     "sadar", "wazir", "aaj", "taza", "maujooda", "khabar", "qeemat",
-    "dollar", "sona", "match",
+    "dollar", "sona", "match", "steam", "discount", "sale", "keemat", "kimat",
+    "release", "stock",
 ]
 
 
@@ -343,10 +344,40 @@ def needs_search(text):
     return any(word in low for word in SEARCH_WORDS)
 
 
-def make_search_query(history):
-    """Returns (query, warning). An empty query means: no web search."""
+def parse_search_plan(text, last):
+    """Returns {"queries": [...], "steam": "..."} or None when no search is needed."""
+    text = (text or "").strip()
+    found = re.search(r"(?s)\{.*\}", text)
+    if found:
+        try:
+            data = json.loads(found.group(0))
+            queries = [
+                str(q).strip()[:150] for q in (data.get("queries") or []) if str(q).strip()
+            ][:3]
+            steam = str(data.get("steam") or "").strip()[:80]
+            if queries or steam:
+                return {"queries": queries or [last[:150]], "steam": steam}
+            return None
+        except Exception:
+            pass
+    plain = text.strip('"').strip()
+    if (
+        not plain
+        or plain.upper().rstrip(".!") == "NO"
+        or re.match(r"(?i)no\s*[.,:;!\-(]", plain)
+        or re.search(r"[{}\[\]@#<>|]", plain)
+        or len(plain) > 200
+    ):
+        return None
+    return {"queries": [plain[:150]], "steam": ""}
+
+
+def make_search_plan(history):
+    """Returns (plan, warning). plan is None when no web search is needed."""
     last = history[-1]["content"] if history else ""
     convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-3:])
+    fallback = {"queries": [last[:150]], "steam": ""}
+    year = today[-4:]
     try:
         text = ask_small(
             [
@@ -355,64 +386,153 @@ def make_search_query(history):
                     "content": (
                         "Today's date is " + today + ". "
                         "Decide whether answering the user's LAST message needs "
-                        "up-to-date information from the internet, such as current "
-                        "office holders (presidents, prime ministers, CEOs), news, "
-                        "prices, sports, weather, or any recent event or fact that "
-                        "can change. "
-                        "If it is NOT needed (math, science, coding, general "
-                        "knowledge, chit-chat), reply with exactly: NO. "
-                        "If it is needed, reply with ONLY a short English web search "
-                        "query (maximum 10 words) and add the year " + today[-4:]
-                        + " when useful. "
-                        "Translate Urdu, Roman Urdu or Hindi into English. "
-                        "Examples: 'amrika ka sadar kaun hai' -> US president "
-                        + today[-4:] + "; 'hello' -> NO; '2+2 kitne hote hain' -> NO; "
-                        "'aaj sone ki qeemat' -> gold price today Pakistan. "
-                        "Output nothing else."
+                        "up-to-date information from the internet: current office "
+                        "holders, news, prices, sales and discounts, sports, "
+                        "weather, releases, or any fact that can change. "
+                        "Reply with ONLY one JSON object: "
+                        '{"search": true or false, "queries": [...], "steam": "..."}. '
+                        "If search is true, give 2 or 3 short English web search "
+                        "queries (maximum 10 words each) that look at the question "
+                        "from different angles; include the year " + year + " when "
+                        "useful and the exact product or edition names. Translate "
+                        "Urdu, Roman Urdu or Hindi into English. Set steam to the "
+                        "official Steam store game title ONLY when the user asks "
+                        "about a game's price, discount or details on Steam (for "
+                        "example GTA 5 -> Grand Theft Auto V); otherwise use an "
+                        "empty string. If no internet is needed (maths, science, "
+                        "coding, general knowledge, chit-chat) reply "
+                        '{"search": false, "queries": [], "steam": ""}.\n'
+                        "Examples:\n"
+                        "'amrika ka sadar kaun hai' -> "
+                        '{"search": true, "queries": ["US president ' + year + '", '
+                        '"who is the current president of the United States"], '
+                        '"steam": ""}\n'
+                        "'GTA 5 ki Steam par keemat kya hai' -> "
+                        '{"search": true, "queries": ["GTA 5 Steam price ' + year + '", '
+                        '"GTA V Enhanced Steam current price discount"], '
+                        '"steam": "Grand Theft Auto V"}\n'
+                        "'hello' -> "
+                        '{"search": false, "queries": [], "steam": ""}'
                     ),
                 },
                 {"role": "user", "content": convo},
             ],
-            max_tokens=300,
+            max_tokens=400,
         )
     except Exception as error:
         if needs_search(last):
-            return last[:200], "⚠️ Search check failed, searched with your text"
-        return "", "⚠️ Search check failed: " + str(error)[:80]
-    query = (text or "").strip().strip('"').strip()
-    said_no = (
-        not query
-        or query.upper().rstrip(".!") == "NO"
-        or re.match(r"(?i)no\s*[.,:;!\-(]", query)
+            return fallback, "⚠️ Search check failed, searched with your text"
+        return None, "⚠️ Search check failed: " + str(error)[:80]
+    plan = parse_search_plan(text, last)
+    if plan is None and needs_search(last):
+        plan = fallback
+    return plan, ""
+
+
+def steam_price(title):
+    """Live prices from the public Steam store search. Returns text, or '' if none."""
+    lines = []
+    for region in ("pk", "us"):
+        url = (
+            "https://store.steampowered.com/api/storesearch/?term="
+            + urllib.parse.quote(title) + "&l=english&cc=" + region
+        )
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (QuantumAI)"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            continue
+        for item in (data.get("items") or [])[:5]:
+            name = item.get("name", "?")
+            price = item.get("price")
+            if isinstance(price, dict) and price.get("final") is not None:
+                final = price["final"] / 100.0
+                initial = (price.get("initial") or price["final"]) / 100.0
+                text = "%s %.2f" % (price.get("currency", ""), final)
+                if initial > final:
+                    text += " (normal price %.2f, %d%% off)" % (
+                        initial, round((1 - final / initial) * 100)
+                    )
+                lines.append("- [%s store] %s: %s" % (region.upper(), name, text))
+            else:
+                lines.append(
+                    "- [%s store] %s: no price listed (free, unreleased or not sold here)"
+                    % (region.upper(), name)
+                )
+    if not lines:
+        return ""
+    return (
+        "STEAM STORE LIVE DATA (official Steam store search, prices as listed today):\n"
+        + "\n".join(lines)
     )
-    if said_no:
-        if needs_search(last):
-            return last[:200], ""
-        return "", ""
-    return query[:200], ""
 
 
-def web_context(query):
+def web_context(queries, steam_title=""):
+    """Runs the searches. Returns (text, error, sources)."""
+    parts, sources, seen, errors = [], [], set(), []
+    steam = steam_price(steam_title) if steam_title else ""
+    if steam:
+        parts.append(steam)
     if not tavily:
-        return "", "TAVILY_API_KEY Secrets میں نہیں ملی"
-    try:
-        res = tavily.search(
-            query=query,
-            search_depth="advanced",
-            max_results=4,
-            include_answer=True,
-        )
-        parts = []
-        if res.get("answer"):
-            parts.append("Quick answer: " + res["answer"])
-        for r in res.get("results", []):
-            parts.append(
-                "- " + r.get("title", "") + " (" + r.get("url", "") + "): "
-                + r.get("content", "")[:400]
+        if parts:
+            return "\n".join(parts), "", sources
+        return "", "TAVILY_API_KEY Secrets میں نہیں ملی", []
+    for index, query in enumerate(queries[:3]):
+        try:
+            res = tavily.search(
+                query=query,
+                search_depth="advanced" if index == 0 else "basic",
+                max_results=5,
+                include_answer=(index == 0),
             )
-        return "\n".join(parts), ""
+        except Exception as error:
+            errors.append(str(error)[:100])
+            continue
+        if index == 0 and res.get("answer"):
+            parts.append("Quick answer (may be incomplete): " + res["answer"])
+        for r in res.get("results", []):
+            url = r.get("url", "")
+            if not url or url in seen or len(sources) >= 8:
+                continue
+            seen.add(url)
+            title = r.get("title") or url
+            parts.append("- " + title + " (" + url + "): " + (r.get("content") or "")[:550])
+            sources.append({"title": title[:90], "url": url})
+    if not sources and not steam:
+        return "", "; ".join(errors) or "no results", []
+    return "\n".join(parts), "", sources
+
+
+def find_photos(query):
+    """Real photos from the web (through Tavily). Returns (urls, sources, error)."""
+    if not tavily:
+        return [], [], "TAVILY_API_KEY Secrets میں نہیں ملی"
+    try:
+        res = tavily.search(query=query, search_depth="basic", max_results=4,
+                            include_images=True)
     except Exception as error:
-        return "", str(error)[:200]
+        return [], [], str(error)[:150]
+    urls = []
+    for item in res.get("images") or []:
+        link = item.get("url") if isinstance(item, dict) else item
+        if isinstance(link, str) and link.startswith("http") and link not in urls:
+            urls.append(link)
+    sources = [
+        {"title": (r.get("title") or r.get("url", ""))[:90], "url": r.get("url", "")}
+        for r in res.get("results", [])[:4] if r.get("url")
+    ]
+    return urls[:4], sources, ("" if urls else "کوئی تصویر نہیں ملی")
+
+
+def show_sources(sources, label="🔎 Sources"):
+    """A folded list of the pages an answer is based on."""
+    if not sources:
+        return
+    with st.expander(label):
+        for item in sources[:10]:
+            title = (item.get("title") or item["url"]).replace("[", "(").replace("]", ")")
+            st.markdown("- [" + title + "](" + item["url"].replace(")", "%29") + ")")
 
 
 # ---------- YouTube ----------
@@ -715,7 +835,7 @@ def parse_plan(text, last):
         return "", ""
     if upper.startswith("REFUSE"):
         return "REFUSE", ""
-    found = re.match(r"(?is)^\s*(PICTURE|DIAGRAM)\s*[:\-]\s*(.+)$", text)
+    found = re.match(r"(?is)^\s*(PICTURE|DIAGRAM|PHOTO)\s*[:\-]\s*(.+)$", text)
     if found:
         return found.group(1).upper(), found.group(2).strip()[:500]
     if REFUSAL_LIKE.match(text):
@@ -744,6 +864,8 @@ def make_image_plan(history):
                         "DIAGRAM: <English description of the labelled "
                         "educational diagram to draw: what to show, which labels, "
                         "what to compare>\n"
+                        "PHOTO: <English web search query for REAL existing "
+                        "photographs>\n"
                         "NO  (the message is not a request to create an image)\n"
                         "REFUSE  (only for sexual content, graphic violence or "
                         "gore, hateful content, or harmful or deceptive images "
@@ -759,7 +881,13 @@ def make_image_plan(history):
                         "for artistic, imaginary or photographic images: animals, "
                         "people, faces, scenes, logos, cartoons, posters. Use "
                         "PICTURE for artistic or photographic "
-                        "images. Drawing people or faces is allowed: never "
+                        "images. Use PHOTO (not PICTURE) when the user wants to SEE or "
+                        "FIND real existing photographs of a place, landmark, "
+                        "animal, object, product, event or famous public figure "
+                        "(dikhao, show me, photos of); use PICTURE when the user "
+                        "wants an image CREATED (banao, draw, generate). Never "
+                        "use PHOTO for private individuals: reply REFUSE. "
+                        "Drawing people or faces is allowed: never "
                         "refuse just because a person or face is in the image. "
                         "If the user wants a chart or graph of real-world data "
                         "or statistics (prices, populations, results), reply NO, "
@@ -781,6 +909,8 @@ def make_image_plan(history):
                         "charges labelled\n"
                         "'newton ka pehla qanoon tasveer se samjhao' -> DIAGRAM: "
                         "Newton's first law with balanced and unbalanced forces\n"
+                        "'badshahi mosque ki photo dikhao' -> PHOTO: Badshahi Mosque "
+                        "Lahore photos\n"
                         "'photo edit kaise karte hain' -> NO"
                     ),
                 },
@@ -1605,7 +1735,8 @@ def transcribe(audio_bytes):
     return text
 
 
-def show_message(role, text, image=None, key=0, svg=None, explanation=None):
+def show_message(role, text, image=None, key=0, svg=None, explanation=None,
+                 photos=None, sources=None):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
@@ -1618,12 +1749,17 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None):
             show_svg(svg, key)
             if explanation:
                 st.markdown(explanation)
+        elif photos:
+            st.image(photos, width=240)
+            st.caption(text)
+            show_sources(sources, "📎 Sources")
         elif image:
             st.image(image)
             st.caption(text)
             image_download_button(image, key)
         else:
             st.markdown(text)
+            show_sources(sources)
 
 
 if st.session_state.messages:
@@ -1647,6 +1783,8 @@ for index, message in enumerate(st.session_state.messages):
         index,
         message.get("svg"),
         message.get("explanation"),
+        message.get("photos"),
+        message.get("sources"),
     )
 
 prompt = st.chat_input("Ask Quantum", accept_audio=True)
@@ -1680,8 +1818,11 @@ if prompt:
             with st.spinner("🎨 تصویر بن رہی ہے..."):
                 kind, plan = make_image_plan(st.session_state.messages)
                 img, svg, img_err, expl = None, None, "", ""
+                photos, photo_sources = [], []
                 if kind == "PICTURE":
                     img, img_err = generate_image(plan)
+                elif kind == "PHOTO":
+                    photos, photo_sources, img_err = find_photos(plan)
                 elif kind == "DIAGRAM":
                     svg, expl, img_err = generate_diagram(plan, user_text)
                     expl = fix_math(expl) if expl else ""
@@ -1715,8 +1856,24 @@ if prompt:
                     }
                 )
                 st.stop()
+            elif photos:
+                st.image(photos, width=240)
+                st.caption("📷 " + plan)
+                show_sources(photo_sources, "📎 Sources")
+                st.session_state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "📷 [Photos] " + plan,
+                        "photos": photos,
+                        "sources": photo_sources,
+                    }
+                )
+                st.stop()
             elif kind:
-                st.error("⚠️ تصویر نہیں بن سکی: " + img_err)
+                st.error(
+                    ("⚠️ تصاویر نہیں مل سکیں: " if kind == "PHOTO"
+                     else "⚠️ تصویر نہیں بن سکی: ") + img_err
+                )
                 st.session_state.messages.pop()
                 st.stop()
             # kind == "": not an image request after all, continue normally
@@ -1729,6 +1886,7 @@ if prompt:
         answer = None
         search_note = ""
         video_note = ""
+        sources = []
 
         with text_box:
             with st.spinner("Thinking..."):
@@ -1748,23 +1906,37 @@ if prompt:
                         else:
                             video_note = "⚠️ YouTube transcript failed: " + yt_err
                     if vid:
-                        query, qwarn = "", ""
+                        plan, qwarn = None, ""
                     else:
-                        query, qwarn = make_search_query(st.session_state.messages) or (
-                            "", "⚠️ search check returned nothing"
+                        plan, qwarn = make_search_plan(st.session_state.messages) or (
+                            None, "⚠️ search check returned nothing"
                         )
-                    if query:
-                        info, err = web_context(query) or ("", "no result returned")
+                    query = plan["queries"][0] if plan else ""
+                    if plan:
+                        info, err, found_sources = web_context(
+                            plan["queries"], plan["steam"]
+                        ) or ("", "no result returned", [])
                         if info:
-                            search_note = "🔎 Web search: " + query
+                            sources = found_sources
+                            search_note = "🔎 Web search: " + " | ".join(plan["queries"])
+                            if plan["steam"]:
+                                search_note += " | Steam store: " + plan["steam"]
                             extra = (
                                 "\n\nFRESH WEB SEARCH RESULTS (searched today, "
-                                + today + ", for: " + query + "):\n" + info
-                                + "\n\nFor current facts, answer ONLY from these "
-                                "results. Ignore your own memory and ignore any "
-                                "earlier answers in this chat that disagree with "
-                                "them. If the results do not clearly contain the "
-                                "answer, say you could not confirm it."
+                                + today + ", for: " + "; ".join(plan["queries"])
+                                + "):\n" + info
+                                + "\n\nHow to use these results: rely on them, not "
+                                "on your memory, and ignore earlier answers in this "
+                                "chat that disagree. Give the concrete facts you "
+                                "find (exact prices with currency, dates, names, "
+                                "editions) and say where they come from. Prices and "
+                                "offers change and differ by region, so say 'as "
+                                "listed' and name the region when known. If the "
+                                "results are incomplete or conflict, still share the "
+                                "best information you have and say clearly what is "
+                                "uncertain; never answer only 'I cannot find it'. "
+                                "Lines marked STEAM STORE LIVE DATA are the most "
+                                "reliable source for Steam prices."
                             )
                         else:
                             search_note = "⚠️ Search failed: " + (err or "no results")
@@ -1852,9 +2024,10 @@ if prompt:
                 st.markdown(answer)
                 if search_note:
                     st.caption(search_note)
+                show_sources(sources)
                 if video_note.startswith("🎬") and st.session_state.get("video_text"):
                     with st.expander("📄 Video transcript (check names here)"):
                         st.write(st.session_state.video_text)
             st.session_state.messages.append(
-                {"role": "assistant", "content": answer}
+                {"role": "assistant", "content": answer, "sources": sources}
             )
