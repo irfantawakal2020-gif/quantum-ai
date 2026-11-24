@@ -1,5 +1,6 @@
 import base64
 from datetime import date
+import io
 import json
 import math
 import os
@@ -218,6 +219,17 @@ ai_on = st.toggle(
     "🎙️ AI transcript for videos without captions (uses Supadata credits)",
     value=True,
 )
+camera_on = st.toggle("📷 Camera: take a photo and ask about it", value=False)
+cam, cam_text, send_cam = None, "", False
+if camera_on:
+    cam_n = st.session_state.get("cam_n", 0)
+    cam = st.camera_input("Take a photo", key="cam_%d" % cam_n)
+    cam_text = st.text_input(
+        "Question about the photo (optional)", key="camq_%d" % cam_n
+    )
+    send_cam = st.button(
+        "📤 Send photo", key="camsend_%d" % cam_n, disabled=cam is None
+    )
 
 UNLOCK_HTML = r"""
 <script>
@@ -1493,6 +1505,104 @@ def generate_image(prompt):
     return None, last_error
 
 
+# ---------- Photos: the user sends a picture, a vision model reads it ----------
+MAX_IMAGES = 3
+MAX_SIDE = 1280
+DEFAULT_IMAGE_QUESTION = (
+    "اس تصویر کا تفصیل سے تجزیہ کرو اور بتاؤ اس میں کیا ہے۔ اگر اس میں کوئی "
+    "سوال یا مسئلہ ہو تو اسے قدم بہ قدم حل کرو۔"
+)
+VISION_MODELS = [
+    m for m in (
+        st.secrets.get("VISION_MODEL"),
+        "qwen/qwen3.8-27b",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+    ) if m
+]
+
+
+def prepare_image(data):
+    """Straightens (phone rotation), shrinks and re-encodes a photo as JPEG bytes."""
+    try:
+        from PIL import Image, ImageOps
+
+        photo = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        photo.thumbnail((MAX_SIDE, MAX_SIDE))
+        out = io.BytesIO()
+        photo.save(out, "JPEG", quality=85)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def describe_images(images, question):
+    """Asks a vision model to read the photos. Returns (description, error)."""
+    content = [{
+        "type": "text",
+        "text": (
+            "User's question or request: " + (question or "")[:500] + "\n\n"
+            "Describe everything visible in detail. Transcribe ALL text exactly as "
+            "written (in any language), including equations, numbers, tables and "
+            "labels. Describe charts, diagrams, objects, colors and layout. If the "
+            "image contains a question or a problem, copy it completely and "
+            "accurately. Say what is unclear. Do not identify real people from "
+            "their faces."
+        ),
+    }]
+    for data in images[:MAX_IMAGES]:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(data).decode()},
+        })
+    messages = [{"role": "user", "content": content}]
+    last_error = "no vision model available"
+    for model in VISION_MODELS:
+        for attempt in range(2):
+            try:
+                try:
+                    result = client.chat.completions.create(
+                        model=model, messages=messages, max_tokens=1800,
+                        temperature=0.2, extra_body={"reasoning_format": "hidden"},
+                    )
+                except Exception as error:
+                    if "reasoning" not in str(error).lower():
+                        raise
+                    result = client.chat.completions.create(
+                        model=model, messages=messages, max_tokens=1800, temperature=0.2,
+                    )
+                text = re.sub(
+                    r"(?s)<think>.*?</think>", "", result.choices[0].message.content or ""
+                ).strip()
+                if text:
+                    return text, ""
+                last_error = "empty answer from " + model
+                break
+            except Exception as error:
+                message = str(error)
+                last_error = message[:150]
+                wait = rate_limit_wait(error)
+                if wait is not None and wait <= 40 and attempt == 0:
+                    time.sleep(wait + 1)
+                    continue
+                break
+    return "", last_error
+
+
+def image_block(limit=3500):
+    """The analysis of the user's latest photo, attached to the user's message."""
+    info = st.session_state.get("image_info", "")
+    if not info:
+        return ""
+    return (
+        "The user shared a photo. A vision model analyzed it and its analysis is "
+        "below. You CAN use it. Answer from it; if the question needs a detail "
+        "that is not in the analysis, say so instead of guessing. If the photo "
+        "contains a question or problem, solve it step by step following your "
+        "usual rules. Never identify real people from their faces.\n\n"
+        "=== IMAGE ANALYSIS START ===\n" + info[:limit] + "\n=== IMAGE ANALYSIS END ==="
+    )
+
+
 USER_AVATAR = "🧑‍💻"
 BOT_AVATAR = logo_path or "🤖"
 
@@ -1736,7 +1846,7 @@ def transcribe(audio_bytes):
 
 
 def show_message(role, text, image=None, key=0, svg=None, explanation=None,
-                 photos=None, sources=None):
+                 photos=None, sources=None, user_images=None):
     avatar = USER_AVATAR if role == "user" else BOT_AVATAR
     with st.chat_message(role, avatar=avatar):
         if role == "user":
@@ -1745,6 +1855,8 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None,
                 if line.strip():
                     safe_line = line.replace("]", "\\]")
                     st.markdown(":green[" + safe_line + "]")
+            if user_images:
+                st.image(user_images, width=180)
         elif svg:
             show_svg(svg, key)
             if explanation:
@@ -1765,7 +1877,7 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None,
 if st.session_state.messages:
     if st.button("🗑️ New chat"):
         st.session_state.messages = []
-        for key in ("video_id", "video_text", "video_title"):
+        for key in ("video_id", "video_text", "video_title", "image_info"):
             st.session_state.pop(key, None)
         st.rerun()
 else:
@@ -1785,16 +1897,35 @@ for index, message in enumerate(st.session_state.messages):
         message.get("explanation"),
         message.get("photos"),
         message.get("sources"),
+        message.get("images"),
     )
 
-prompt = st.chat_input("Ask Quantum", accept_audio=True)
+try:
+    prompt = st.chat_input(
+        "Ask Quantum",
+        accept_audio=True,
+        accept_file="multiple",
+        file_type=["png", "jpg", "jpeg", "webp"],
+    )
+except TypeError:
+    prompt = st.chat_input("Ask Quantum", accept_audio=True)
 
-if prompt:
-    user_text = prompt.text or ""
+camera_send = bool(send_cam and cam is not None)
 
-    if prompt.audio:
+if prompt or camera_send:
+    user_text = (prompt.text if prompt else "") or ""
+    files = list(getattr(prompt, "files", None) or []) if prompt else []
+    images = []
+
+    if camera_send:
+        files = [cam]
+        user_text = (cam_text or "").strip()
+        st.session_state.cam_n = st.session_state.get("cam_n", 0) + 1
+
+    audio = getattr(prompt, "audio", None) if prompt else None
+    if audio:
         try:
-            spoken = transcribe(prompt.audio.getvalue())
+            spoken = transcribe(audio.getvalue())
             if spoken is None:
                 st.warning(
                     "آواز کی زبان پہچانی نہیں گئی۔ اوپر Mic language میں "
@@ -1807,13 +1938,26 @@ if prompt:
         except Exception as error:
             st.error("Voice error: " + str(error))
 
+    for file in files[:MAX_IMAGES]:
+        prepared = prepare_image(file.getvalue())
+        if prepared:
+            images.append(prepared)
+    if files and not images:
+        st.warning("تصویر پڑھی نہیں جا سکی۔ jpg، png یا webp تصویر بھیجیں۔")
+        st.stop()
+    if images and not user_text.strip():
+        user_text = DEFAULT_IMAGE_QUESTION
+
     if not user_text.strip():
         st.stop()
 
-    st.session_state.messages.append({"role": "user", "content": user_text})
-    show_message("user", user_text)
+    new_message = {"role": "user", "content": user_text}
+    if images:
+        new_message["images"] = images
+    st.session_state.messages.append(new_message)
+    show_message("user", user_text, user_images=images)
 
-    if is_image_request(user_text) and not find_youtube_id(user_text):
+    if is_image_request(user_text) and not find_youtube_id(user_text) and not images:
         with st.chat_message("assistant", avatar=BOT_AVATAR):
             with st.spinner("🎨 تصویر بن رہی ہے..."):
                 kind, plan = make_image_plan(st.session_state.messages)
@@ -1893,6 +2037,22 @@ if prompt:
                 try:
                     extra = ""
                     video_note = ""
+                    image_note = ""
+                    if images:
+                        description, vision_error = describe_images(
+                            images, user_text
+                        ) or ("", "no result")
+                        if description:
+                            st.session_state.image_info = description
+                            image_note = "🖼️ Image analyzed"
+                        else:
+                            st.session_state.pop("image_info", None)
+                            image_note = "⚠️ Image analysis failed: " + vision_error
+                            extra += (
+                                "\n\nThe user sent a photo but it could not be "
+                                "analyzed. Do NOT guess what it shows; tell the "
+                                "user honestly that the photo could not be read."
+                            )
                     vid = find_youtube_id(user_text)
                     if vid and vid != st.session_state.get("video_id"):
                         for key in ("video_id", "video_text", "video_title"):
@@ -1905,7 +2065,7 @@ if prompt:
                             video_note = "🎬 YouTube transcript loaded"
                         else:
                             video_note = "⚠️ YouTube transcript failed: " + yt_err
-                    if vid:
+                    if vid or images:
                         plan, qwarn = None, ""
                     else:
                         plan, qwarn = make_search_plan(st.session_state.messages) or (
@@ -1947,10 +2107,10 @@ if prompt:
                             "contains. Tell the user honestly that you could not "
                             "read this video."
                         )
-                    if not query and not qwarn and not vid:
+                    if not query and not qwarn and not vid and not images:
                         search_note = "ℹ️ No web search for this question"
                     search_note = (
-                        video_note + "  " + qwarn + "  " + search_note
+                        video_note + "  " + image_note + "  " + qwarn + "  " + search_note
                     ).strip()
                     has_video = bool(st.session_state.get("video_text"))
                     history_chars = (
@@ -1962,13 +2122,16 @@ if prompt:
                             st.session_state.messages[-MAX_HISTORY:], hist_chars
                         )
                         video_text = video_block(video_limit)
-                        if video_text and history:
+                        image_text = image_block(
+                            3500 if video_limit >= VIDEO_CTX_CHARS else 1500
+                        )
+                        prefix = "\n\n".join(t for t in (video_text, image_text) if t)
+                        if prefix and history:
                             last = history[-1]
                             history[-1] = {
                                 "role": last["role"],
                                 "content": (
-                                    video_text + "\n\nUSER MESSAGE:\n"
-                                    + last["content"]
+                                    prefix + "\n\nUSER MESSAGE:\n" + last["content"]
                                 ),
                             }
                         system = system_text + extra
