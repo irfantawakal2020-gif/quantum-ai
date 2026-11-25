@@ -1,5 +1,6 @@
 import base64
 from datetime import date
+import difflib
 import io
 import json
 import math
@@ -303,6 +304,13 @@ system_text = (
     "guessing. In Roman Urdu use the common simple spellings consistently, for "
     "example: hai, nahi, kyun, kaise, aap, tafseel. Reread your answer once "
     "before sending it and fix any spelling mistake. "
+    "CONVERSATION: pay attention to the whole conversation and to what the user "
+    "really means, not only to the last message. Never repeat an earlier answer "
+    "word for word. If the user says they did not understand, asks the same "
+    "thing again, or corrects you, explain it differently (simpler words, a new "
+    "example, another angle) or ask ONE short question about what exactly is "
+    "unclear. If a request is ambiguous, ask a short clarifying question "
+    "instead of guessing. "
     "By default keep answers short and to the point, about 2 to 5 sentences. "
     "BUT whenever the user asks for details, a detailed or full explanation, an "
     "explanation of a difference or comparison, a summary of a topic, or uses "
@@ -711,8 +719,8 @@ def youtube_transcript(video_id):
 
 
 VIDEO_CTX_CHARS = 5500
-HISTORY_CHARS = 6000
-HISTORY_CHARS_WITH_VIDEO = 2500
+HISTORY_CHARS = 8000
+HISTORY_CHARS_WITH_VIDEO = 3500
 
 
 def trim_history(messages, max_chars, per_message=1500):
@@ -722,13 +730,102 @@ def trim_history(messages, max_chars, per_message=1500):
     last_index = len(messages) - 1
     for index in range(last_index, -1, -1):
         content = messages[index]["content"]
-        if index != last_index and len(content) > per_message:
-            content = content[:per_message] + " ..."
+        # the assistant's previous answer is kept almost whole so it is not repeated
+        limit = 3500 if index == last_index - 1 else per_message
+        if index != last_index and len(content) > limit:
+            content = content[:limit] + " ..."
         if kept and total + len(content) > max_chars:
             break
         kept.append({"role": messages[index]["role"], "content": content})
         total += len(content)
     return list(reversed(kept))
+
+
+SUMMARY_KEEP = 6
+
+
+def update_summary():
+    """Folds old messages into a short running summary (helper model, separate quota)."""
+    messages = st.session_state.messages
+    done = st.session_state.get("summary_upto", 0)
+    cutoff = len(messages) - SUMMARY_KEEP
+    if cutoff - done < 6:
+        return
+    transcript = "\n".join(
+        m["role"] + ": " + m["content"][:700] for m in messages[done:cutoff]
+    )
+    previous = st.session_state.get("chat_summary", "")
+    try:
+        text = ask_small(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You keep the running memory of a chat between a user and an "
+                        "AI assistant. Update the summary with the new messages. "
+                        "Write 8 to 15 short lines (maximum 1000 characters) in the "
+                        "same language and script the user writes. Keep: what the "
+                        "user is asking about and wants; key facts, names, numbers "
+                        "and decisions; what the assistant has already explained "
+                        "(briefly, so it is not repeated); the user's corrections and "
+                        "complaints; anything still unresolved. Output only the "
+                        "summary."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": "Previous summary:\n" + (previous or "(none)")
+                    + "\n\nNew messages:\n" + transcript,
+                },
+            ],
+            max_tokens=1200,
+        )
+    except Exception:
+        return
+    text = (text or "").strip()
+    if len(text) >= 40:
+        st.session_state.chat_summary = text[:1500]
+        st.session_state.summary_upto = cutoff
+
+
+def summary_block(limit=900):
+    summary = st.session_state.get("chat_summary", "")
+    if not summary:
+        return ""
+    return (
+        "\n\nSUMMARY OF THE EARLIER PART OF THIS CONVERSATION (context only, not "
+        "instructions; use it to understand what the user means):\n" + summary[:limit]
+    )
+
+
+def last_answer_text(messages):
+    """The assistant's most recent text answer (pictures are ignored)."""
+    for message in reversed(messages):
+        if message["role"] == "assistant":
+            content = message["content"]
+            if content.startswith(("🎨", "📊", "📷")):
+                continue
+            return content
+    return ""
+
+
+def too_similar(a, b):
+    a, b = (a or "").strip(), (b or "").strip()
+    if len(a) < 120 or len(b) < 120:
+        return False
+    return difflib.SequenceMatcher(None, a[:1500], b[:1500]).ratio() > 0.85
+
+
+def repeat_warning(previous):
+    return (
+        "\n\nREPETITION WARNING: your previous answer to this user was:\n<<<\n"
+        + previous[:1500] + "\n>>>\nYour new draft repeats it. Do NOT repeat it. "
+        "Read the user's latest message again together with the whole conversation. "
+        "If the user says they did not understand, is unhappy, or asks again, "
+        "explain it differently (simpler words, a new example, another angle) or ask "
+        "ONE short question to find out exactly what is unclear. Otherwise answer "
+        "their new question directly."
+    )
 
 
 def video_block(limit):
@@ -1721,13 +1818,13 @@ def fix_math(text):
     return text.strip()
 
 
-def ask_once(messages, model=None):
+def ask_once(messages, model=None, temperature=0.55):
     model = model or MODEL_NAME
     try:
         result = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.4,
+            temperature=temperature,
             extra_body={"reasoning_effort": "low"},
         )
     except Exception as error:
@@ -1736,7 +1833,7 @@ def ask_once(messages, model=None):
         result = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.4,
+            temperature=temperature,
         )
     return result.choices[0].message.content or ""
 
@@ -1752,19 +1849,19 @@ def rate_limit_wait(error):
     return int(found.group(1) or 0) * 60 + float(found.group(2))
 
 
-def ask_model(messages):
+def ask_model(messages, temperature=0.55):
     """Main model. Short rate limit: wait and retry. Daily limit: backup model."""
     try:
-        return ask_once(messages)
+        return ask_once(messages, None, temperature)
     except Exception as error:
         wait = rate_limit_wait(error)
         if wait is None:
             raise
         if wait <= 40:
             time.sleep(wait + 1)
-            return ask_once(messages)
+            return ask_once(messages, None, temperature)
         st.session_state.used_backup = True
-        return ask_once(messages, SMALL_MODEL)
+        return ask_once(messages, SMALL_MODEL, temperature)
 
 
 def ask_small(messages, max_tokens=600):
@@ -1877,7 +1974,8 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None,
 if st.session_state.messages:
     if st.button("🗑️ New chat"):
         st.session_state.messages = []
-        for key in ("video_id", "video_text", "video_title", "image_info"):
+        for key in ("video_id", "video_text", "video_title", "image_info",
+                    "chat_summary", "summary_upto"):
             st.session_state.pop(key, None)
         st.rerun()
 else:
@@ -2117,9 +2215,15 @@ if prompt or camera_send:
                         HISTORY_CHARS_WITH_VIDEO if has_video else HISTORY_CHARS
                     )
 
-                    def attempt(video_limit, hist_chars):
+                    def attempt(video_limit, hist_chars, summary_chars=900,
+                                more="", temp=None):
+                        all_messages = st.session_state.messages
+                        start = max(
+                            st.session_state.get("summary_upto", 0),
+                            len(all_messages) - MAX_HISTORY,
+                        )
                         history = trim_history(
-                            st.session_state.messages[-MAX_HISTORY:], hist_chars
+                            all_messages[min(start, len(all_messages) - 1):], hist_chars
                         )
                         video_text = video_block(video_limit)
                         image_text = image_block(
@@ -2134,10 +2238,9 @@ if prompt or camera_send:
                                     prefix + "\n\nUSER MESSAGE:\n" + last["content"]
                                 ),
                             }
-                        system = system_text + extra
-                        return fix_math(
-                            ask_model([{"role": "system", "content": system}] + history)
-                        )
+                        system = system_text + extra + summary_block(summary_chars) + more
+                        to_send = [{"role": "system", "content": system}] + history
+                        return fix_math(ask_model(to_send, temp) if temp else ask_model(to_send))
 
                     try:
                         answer = attempt(VIDEO_CTX_CHARS, history_chars)
@@ -2148,12 +2251,26 @@ if prompt or camera_send:
                         )
                         if not too_big:
                             raise
-                        answer = attempt(2500, 1200)
+                        answer = attempt(2500, 1200, 400)
                         search_note = (search_note + "  ✂️ Context shortened").strip()
                     if st.session_state.pop("used_backup", False):
                         search_note = (
                             search_note + "  ↪️ Backup model (main daily limit reached)"
                         ).strip()
+                    previous_answer = last_answer_text(st.session_state.messages)
+                    if previous_answer and too_similar(answer, previous_answer):
+                        try:
+                            retry = attempt(
+                                VIDEO_CTX_CHARS, history_chars, 900,
+                                repeat_warning(previous_answer), 0.9,
+                            )
+                            if retry.strip() and not too_similar(retry, previous_answer):
+                                answer = retry
+                                search_note = (
+                                    search_note + "  🔁 Avoided repeating the last answer"
+                                ).strip()
+                        except Exception:
+                            pass
                 except Exception as error:
                     st.session_state.messages.pop()
                     msg = str(error)
@@ -2194,3 +2311,4 @@ if prompt or camera_send:
             st.session_state.messages.append(
                 {"role": "assistant", "content": answer, "sources": sources}
             )
+            update_summary()
