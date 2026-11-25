@@ -220,7 +220,10 @@ ai_on = st.toggle(
     "🎙️ AI transcript for videos without captions (uses Supadata credits)",
     value=True,
 )
-camera_on = st.toggle("📷 Camera: take a photo and ask about it", value=False)
+camera_on = st.toggle(
+    "📷 Quick camera (low quality). For sharp photos use the + button, then Camera",
+    value=False,
+)
 cam, cam_text, send_cam = None, "", False
 if camera_on:
     cam_n = st.session_state.get("cam_n", 0)
@@ -1604,7 +1607,7 @@ def generate_image(prompt):
 
 # ---------- Photos: the user sends a picture, a vision model reads it ----------
 MAX_IMAGES = 3
-MAX_SIDE = 1280
+MAX_SIDE = 2000
 DEFAULT_IMAGE_QUESTION = (
     "اس تصویر کا تفصیل سے تجزیہ کرو اور بتاؤ اس میں کیا ہے۔ اگر اس میں کوئی "
     "سوال یا مسئلہ ہو تو اسے قدم بہ قدم حل کرو۔"
@@ -1618,39 +1621,90 @@ VISION_MODELS = [
 ]
 
 
+try:  # iPhone HEIC photos, if the optional package is installed
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except Exception:
+    pass
+
+PATTERN_WORDS = re.compile(
+    r"(?i)\b(pattern|example|method|approach|template|same way|same style|same format|"
+    r"like this|learn|follow|tarika|tareeqa|tariqa|isi tarah|isi tarhan|misal|seekh|"
+    r"dekh\s*lo|dekho)\b"
+    r"|پیٹرن|طریقہ|طریقے|اسی طرح|اسی انداز|مثال|سیکھ|دیکھ لو|انداز|नमूना|तरीका|"
+    r"पैटर्न|इसी तरह|उदाहरण"
+)
+UNCLEAR_WORDS = re.compile(
+    r"(?i)\[unclear\]|unreadable|illegible|not legible|cannot read|can't read|"
+    r"too blurry|can't make out|cannot make out|hard to read"
+)
+
+
 def prepare_image(data):
     """Straightens (phone rotation), shrinks and re-encodes a photo as JPEG bytes."""
     try:
         from PIL import Image, ImageOps
 
-        photo = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        Image.MAX_IMAGE_PIXELS = 300_000_000
+        photo = Image.open(io.BytesIO(data))
+        try:
+            photo.draft("RGB", (MAX_SIDE * 2, MAX_SIDE * 2))  # fast decode of huge JPEGs
+        except Exception:
+            pass
+        photo = ImageOps.exif_transpose(photo).convert("RGB")
         photo.thumbnail((MAX_SIDE, MAX_SIDE))
         out = io.BytesIO()
-        photo.save(out, "JPEG", quality=85)
+        photo.save(out, "JPEG", quality=90)
         return out.getvalue()
     except Exception:
         return None
 
 
-def describe_images(images, question):
-    """Asks a vision model to read the photos. Returns (description, error)."""
-    content = [{
-        "type": "text",
-        "text": (
-            "User's question or request: " + (question or "")[:500] + "\n\n"
-            "Describe everything visible in detail. Transcribe ALL text exactly as "
-            "written (in any language), including equations, numbers, tables and "
-            "labels. Describe charts, diagrams, objects, colors and layout. If the "
-            "image contains a question or a problem, copy it completely and "
-            "accurately. Say what is unclear. Do not identify real people from "
-            "their faces."
-        ),
-    }]
-    for data in images[:MAX_IMAGES]:
-        content.append({
+def rotate_jpeg(data, angle):
+    try:
+        from PIL import Image
+
+        photo = Image.open(io.BytesIO(data)).rotate(angle, expand=True)
+        out = io.BytesIO()
+        photo.save(out, "JPEG", quality=90)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def unclear_score(text):
+    return len(UNCLEAR_WORDS.findall(text or ""))
+
+
+def vision_call(image, question):
+    """One request with one photo. Returns (text, error)."""
+    content = [
+        {
+            "type": "text",
+            "text": (
+                "Context from the user (for focus only, do not answer it): "
+                + (question or "")[:400] + "\n\n"
+                "Your job is to READ this photo as accurately as possible. The photo "
+                "may be tilted, rotated, upside down, mirrored, blurry or shadowed: "
+                "read it anyway, mentally correcting the angle. 1) Transcribe ALL "
+                "text exactly as written, in any language, line by line: questions, "
+                "given data, numbers, units, equations, table cells, labels. 2) If it "
+                "shows a SOLVED example, transcribe EVERY step in order: each "
+                "formula, substitution, calculation, unit, the final answer, and the "
+                "layout (headings, numbering, how steps are arranged). 3) Describe "
+                "diagrams, circuits, graphs and figures precisely (shapes, labels, "
+                "values, arrows, directions). 4) Describe other objects, colors and "
+                "layout briefly. Write [unclear] for any part you cannot read; never "
+                "guess numbers and never refuse because of the angle or quality. Do "
+                "not identify real people from their faces."
+            ),
+        },
+        {
             "type": "image_url",
-            "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(data).decode()},
-        })
+            "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode()},
+        },
+    ]
     messages = [{"role": "user", "content": content}]
     last_error = "no vision model available"
     for model in VISION_MODELS:
@@ -1658,14 +1712,14 @@ def describe_images(images, question):
             try:
                 try:
                     result = client.chat.completions.create(
-                        model=model, messages=messages, max_tokens=1800,
-                        temperature=0.2, extra_body={"reasoning_format": "hidden"},
+                        model=model, messages=messages, max_tokens=2200,
+                        temperature=0.1, extra_body={"reasoning_format": "hidden"},
                     )
                 except Exception as error:
                     if "reasoning" not in str(error).lower():
                         raise
                     result = client.chat.completions.create(
-                        model=model, messages=messages, max_tokens=1800, temperature=0.2,
+                        model=model, messages=messages, max_tokens=2200, temperature=0.1,
                     )
                 text = re.sub(
                     r"(?s)<think>.*?</think>", "", result.choices[0].message.content or ""
@@ -1675,8 +1729,7 @@ def describe_images(images, question):
                 last_error = "empty answer from " + model
                 break
             except Exception as error:
-                message = str(error)
-                last_error = message[:150]
+                last_error = str(error)[:150]
                 wait = rate_limit_wait(error)
                 if wait is not None and wait <= 40 and attempt == 0:
                     time.sleep(wait + 1)
@@ -1685,19 +1738,73 @@ def describe_images(images, question):
     return "", last_error
 
 
-def image_block(limit=3500):
-    """The analysis of the user's latest photo, attached to the user's message."""
+def read_photo(data, question):
+    """Reads one photo. If it comes back unclear, retries rotated by 90 and 270 degrees."""
+    text, error = vision_call(data, question)
+    if text and unclear_score(text) < 3:
+        return text, ""
+    best = text
+    for angle in (90, 270):
+        rotated = rotate_jpeg(data, angle)
+        if not rotated:
+            continue
+        again, _ = vision_call(rotated, question)
+        if again and (not best or unclear_score(again) < unclear_score(best)):
+            best = again
+        if again and unclear_score(again) < 3:
+            break
+    return (best, "") if best else ("", error)
+
+
+def describe_images(images, question):
+    """Reads each photo separately (keeps every request under the token limit)."""
+    parts, errors = [], []
+    for number, data in enumerate(images[:MAX_IMAGES], 1):
+        text, error = read_photo(data, question)
+        if text:
+            parts.append(("PHOTO %d:\n" % number if len(images) > 1 else "") + text)
+        else:
+            errors.append(error)
+    if parts:
+        return "\n\n".join(parts), ""
+    return "", "; ".join(errors)[:200]
+
+
+def image_block(limit=3500, fresh_reference=False):
+    """Photo transcriptions (and a saved reference example) for the user's message."""
+    reference = st.session_state.get("reference_info", "")
     info = st.session_state.get("image_info", "")
-    if not info:
+    if not reference and not info:
         return ""
-    return (
-        "The user shared a photo. A vision model analyzed it and its analysis is "
-        "below. You CAN use it. Answer from it; if the question needs a detail "
-        "that is not in the analysis, say so instead of guessing. If the photo "
-        "contains a question or problem, solve it step by step following your "
-        "usual rules. Never identify real people from their faces.\n\n"
-        "=== IMAGE ANALYSIS START ===\n" + info[:limit] + "\n=== IMAGE ANALYSIS END ==="
+    text = (
+        "The user shared photo(s). A vision model read them and its transcription "
+        "is below. You CAN use it. Answer from it; if something is marked [unclear] "
+        "or missing, say so instead of guessing. If a photo contains a question or "
+        "problem, solve it step by step following your usual rules. Never identify "
+        "real people from their faces."
     )
+    if reference:
+        text += (
+            "\n\n=== REFERENCE EXAMPLE (the user showed it earlier; their instruction "
+            "was: " + st.session_state.get("reference_task", "")[:300] + ") ===\n"
+            + reference[:limit] + "\n=== END REFERENCE EXAMPLE ===\n"
+            "For every new question the user gives (typed or as a photo), solve it "
+            "step by step following EXACTLY the same pattern as this reference "
+            "example: same order of steps, same formulas and style, same layout, "
+            "until the user says otherwise."
+        )
+        if fresh_reference:
+            text += (
+                " In THIS reply do not solve anything yet: first list in 3 to 6 short "
+                "points the pattern you noticed (steps, formulas, layout), say you "
+                "will use it, and ask for the next question."
+            )
+    if info:
+        text += (
+            "\n\n=== LATEST PHOTO TRANSCRIPTION ===\n" + info[:limit]
+            + "\n=== END LATEST PHOTO ==="
+        )
+    return text
 
 
 USER_AVATAR = "🧑‍💻"
@@ -1975,7 +2082,7 @@ if st.session_state.messages:
     if st.button("🗑️ New chat"):
         st.session_state.messages = []
         for key in ("video_id", "video_text", "video_title", "image_info",
-                    "chat_summary", "summary_upto"):
+                    "reference_info", "reference_task", "chat_summary", "summary_upto"):
             st.session_state.pop(key, None)
         st.rerun()
 else:
@@ -2003,7 +2110,8 @@ try:
         "Ask Quantum",
         accept_audio=True,
         accept_file="multiple",
-        file_type=["png", "jpg", "jpeg", "webp"],
+        file_type=["png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "tif",
+                   "tiff", "heic", "heif", "avif"],
     )
 except TypeError:
     prompt = st.chat_input("Ask Quantum", accept_audio=True)
@@ -2036,12 +2144,21 @@ if prompt or camera_send:
         except Exception as error:
             st.error("Voice error: " + str(error))
 
+    failed = []
     for file in files[:MAX_IMAGES]:
         prepared = prepare_image(file.getvalue())
         if prepared:
             images.append(prepared)
+        else:
+            failed.append(getattr(file, "name", "file"))
+    if len(files) > MAX_IMAGES:
+        st.info("ایک وقت میں صرف پہلی %d تصاویر استعمال ہوتی ہیں۔" % MAX_IMAGES)
+    if failed:
+        st.warning(
+            "یہ فائلیں تصویر کے طور پر نہیں کھل سکیں: " + "، ".join(failed)
+            + "۔ اگر یہ آئی فون کی HEIC تصویر ہے تو اسے jpg میں بدل کر بھیجیں۔"
+        )
     if files and not images:
-        st.warning("تصویر پڑھی نہیں جا سکی۔ jpg، png یا webp تصویر بھیجیں۔")
         st.stop()
     if images and not user_text.strip():
         user_text = DEFAULT_IMAGE_QUESTION
@@ -2129,6 +2246,8 @@ if prompt or camera_send:
         search_note = ""
         video_note = ""
         sources = []
+        image_read = ""
+        fresh_reference = False
 
         with text_box:
             with st.spinner("Thinking..."):
@@ -2141,8 +2260,18 @@ if prompt or camera_send:
                             images, user_text
                         ) or ("", "no result")
                         if description:
-                            st.session_state.image_info = description
-                            image_note = "🖼️ Image analyzed"
+                            image_read = description
+                            if PATTERN_WORDS.search(user_text):
+                                st.session_state.reference_info = description
+                                st.session_state.reference_task = user_text
+                                st.session_state.pop("image_info", None)
+                                fresh_reference = True
+                                image_note = "📌 Reference example saved"
+                            else:
+                                st.session_state.image_info = description
+                                image_note = "🖼️ Image analyzed"
+                            if unclear_score(description) >= 3:
+                                image_note += " (parts unclear: retake closer, brighter, straighter)"
                         else:
                             st.session_state.pop("image_info", None)
                             image_note = "⚠️ Image analysis failed: " + vision_error
@@ -2227,7 +2356,8 @@ if prompt or camera_send:
                         )
                         video_text = video_block(video_limit)
                         image_text = image_block(
-                            3500 if video_limit >= VIDEO_CTX_CHARS else 1500
+                            3500 if video_limit >= VIDEO_CTX_CHARS else 1500,
+                            fresh_reference,
                         )
                         prefix = "\n\n".join(t for t in (video_text, image_text) if t)
                         if prefix and history:
@@ -2305,6 +2435,9 @@ if prompt or camera_send:
                 if search_note:
                     st.caption(search_note)
                 show_sources(sources)
+                if image_read:
+                    with st.expander("🖼️ What I read from your photo"):
+                        st.text(image_read)
                 if video_note.startswith("🎬") and st.session_state.get("video_text"):
                     with st.expander("📄 Video transcript (check names here)"):
                         st.write(st.session_state.video_text)
