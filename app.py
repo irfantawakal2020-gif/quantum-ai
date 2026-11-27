@@ -316,6 +316,12 @@ system_text = (
     "ان کی, جس کا, کیونکہ, نہیں, میں, ہیں, چاہیے, کیا, گیا, لیکن, بھی, اگر, "
     "تو, پھر, جبکہ, یعنی. Do not put any Chinese, Russian, Thai or Devanagari "
     "characters inside an Urdu answer. "
+    "UNDERSTANDING: first work out what the user's LAST message is really about. "
+    "A video, photo or document shared earlier is only background: use it "
+    "only when the question is about it. If the user says the question has "
+    "nothing to do with it, believe them, drop it and answer the question "
+    "itself. Never reply that something is not mentioned in the video, photo "
+    "or document when the question is about something else. "
     "CONVERSATION: pay attention to the whole conversation and to what the user "
     "really means, not only to the last message. Never repeat an earlier answer "
     "word for word. If the user says they did not understand, asks the same "
@@ -821,7 +827,7 @@ def last_answer_text(messages):
 
 def too_similar(a, b):
     a, b = (a or "").strip(), (b or "").strip()
-    if len(a) < 120 or len(b) < 120:
+    if len(a) < 30 or len(b) < 30:
         return False
     return difflib.SequenceMatcher(None, a[:1500], b[:1500]).ratio() > 0.85
 
@@ -849,6 +855,12 @@ def video_block(limit):
         "this transcript, so use it.\n\n"
         "=== VIDEO TRANSCRIPT START ===\n" + text[:limit]
         + "\n=== VIDEO TRANSCRIPT END ===\n\n"
+        "FIRST decide whether the user's latest message is about this video. If it is "
+        "a general question, a question about you (your name, who made you), "
+        "chit-chat, or the user says it has nothing to do with the video, "
+        "IGNORE the transcript completely and answer normally as Quantum AI; "
+        "never say that the video does not mention it. "
+        "Only if the message is about the video: "
         "Rules: Answer from the transcript and give full details: main points "
         "in order, names, numbers, steps and examples. If the user's message "
         "below contains only a YouTube link and no question, write a detailed "
@@ -1787,7 +1799,9 @@ def image_block(limit=3500, fresh_reference=False):
         return ""
     text = (
         "The user shared photo(s). A vision model read them and its transcription "
-        "is below. You CAN use it. Answer from it; if something is marked [unclear] "
+        "is below. You CAN use it, but only when the user's message is about the "
+        "photo; for a general question or a question about you, ignore it and "
+        "answer normally. Answer from it; if something is marked [unclear] "
         "or missing, say so instead of guessing. If a photo contains a question or "
         "problem, solve it step by step following your usual rules. Never identify "
         "real people from their faces."
@@ -1841,7 +1855,9 @@ def doc_block(limit=9000):
         return ""
     return (
         "The user uploaded document(s). Their text is below. You CAN use it. "
-        "Answer from it; if the text does not contain the answer, say so. "
+        "Use it only when the user's message is about the document; for a general "
+        "question or a question about you, ignore it and answer normally. "
+        "If the message is about the document but the text does not contain the answer, say so. "
         "Do not invent things.\n"
         "=== DOCUMENT START ===\n" + text[:limit] + "\n=== DOCUMENT END ==="
     )
