@@ -208,6 +208,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Your own Ollama server (set these three in Streamlit Secrets, never in the code)
+CUSTOM_URL = str(st.secrets.get("CUSTOM_API_URL") or "").strip()
+CUSTOM_KEY = str(st.secrets.get("CUSTOM_API_KEY") or "").strip()
+CUSTOM_MODEL = str(st.secrets.get("CUSTOM_MODEL") or "").strip()
+
 mic_choice = st.radio(
     "🎤 Mic language",
     ["Auto", "English", "اردو"],
@@ -217,6 +222,12 @@ speak_on = st.toggle("🔊 Read answers aloud", value=False)
 fix_on = st.toggle(
     "✍️ اردو املا کی جانچ (ہر اردو جواب پر ایک اضافی درخواست لگتی ہے)",
     value=True,
+)
+use_custom = st.toggle(
+    "🏠 جوابات کے لیے اپنا Ollama سرور استعمال کریں",
+    value=False,
+    disabled=not CUSTOM_URL,
+    help="پہلے Secrets میں CUSTOM_API_URL اور CUSTOM_API_KEY لکھیں",
 )
 ai_on = st.toggle(
     "🎙 AI transcript for videos without captions (uses Supadata credits)",
@@ -235,6 +246,22 @@ if camera_on:
     )
     send_cam = st.button(
         "📤 Send photo", key="camsend_%d" % cam_n, disabled=cam is None
+    )
+
+# A second way to attach photos and files, in case the + button of the chat box fails
+up_n = st.session_state.get("up_n", 0)
+with st.expander("📎 تصویر یا فائل اپلوڈ کریں (اگر نیچے + کام نہ کرے)"):
+    up_files = st.file_uploader(
+        "تصاویر، PDF یا ٹیکسٹ فائلیں چنیں",
+        accept_multiple_files=True,
+        key="up_%d" % up_n,
+    )
+    up_text = st.text_input(
+        "سوال (اختیاری). خالی چھوڑیں تو ایپ خود تجزیہ کرے گی",
+        key="upq_%d" % up_n,
+    )
+    send_up = st.button(
+        "📤 بھیجیں", key="upsend_%d" % up_n, disabled=not up_files
     )
 
 UNLOCK_HTML = r"""
@@ -2038,8 +2065,92 @@ def rate_limit_wait(error):
     return int(found.group(1) or 0) * 60 + float(found.group(2))
 
 
-def ask_model(messages, temperature=0.4):
+def flatten_messages(messages):
+    """Turns the chat list into one plain prompt for a simple /generate endpoint."""
+    names = {"system": "System", "user": "User", "assistant": "Assistant"}
+    parts = [names.get(m["role"], m["role"]) + ": " + m["content"] for m in messages]
+    return "\n\n".join(parts) + "\n\nAssistant:"
+
+
+def custom_call(messages, temperature=0.4):
+    """Sends the chat to your own server. Returns (raw_text, error)."""
+    if not CUSTOM_URL:
+        return "", "CUSTOM_API_URL Secrets میں نہیں ملی"
+    body = {
+        "prompt": flatten_messages(messages),
+        "messages": messages,
+        "stream": False,
+        "temperature": temperature,
+    }
+    if CUSTOM_MODEL:
+        body["model"] = CUSTOM_MODEL
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (QuantumAI)",
+    }
+    if CUSTOM_KEY:
+        headers["Authorization"] = "Bearer " + CUSTOM_KEY
+        headers["X-API-Key"] = CUSTOM_KEY
+    request = urllib.request.Request(
+        CUSTOM_URL, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as r:
+            return r.read().decode("utf-8", errors="replace"), ""
+    except urllib.error.HTTPError as error:
+        try:
+            detail = error.read().decode("utf-8", errors="replace")[:200]
+        except Exception:
+            detail = ""
+        return "", "HTTP " + str(error.code) + " " + detail
+    except Exception as error:
+        return "", str(error)[:200]
+
+
+def parse_custom_reply(raw):
+    """Finds the answer text in the reply of a simple or OpenAI-style server."""
+    raw = (raw or "").strip()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw
+    text = ""
+    if isinstance(data, str):
+        text = data
+    elif isinstance(data, dict):
+        for key in ("response", "text", "output", "answer", "reply", "content",
+                    "result", "generated_text"):
+            if isinstance(data.get(key), str) and data[key].strip():
+                text = data[key]
+                break
+        if not text and isinstance(data.get("message"), dict):
+            text = str(data["message"].get("content") or "")
+        if not text and isinstance(data.get("choices"), list) and data["choices"]:
+            first = data["choices"][0] or {}
+            text = str((first.get("message") or {}).get("content") or first.get("text") or "")
+    return re.sub(r"(?s)<think>.*?</think>", "", text).strip()
+
+
+def custom_chat(messages, temperature=0.4):
+    """Returns (answer, error) from your own server."""
+    raw, error = custom_call(messages, temperature)
+    if error:
+        return "", error
+    text = parse_custom_reply(raw)
+    if not text:
+        return "", "سرور کا جواب سمجھ نہیں آیا: " + raw[:150]
+    return text, ""
+
+
+def ask_model(messages, temperature=0.4, custom=False):
     """Main model. Short rate limit: wait and retry. Daily limit: backup model."""
+    if custom and CUSTOM_URL:
+        text, error = custom_chat(messages, temperature)
+        if text:
+            st.session_state.custom_used = True
+            return text
+        st.session_state.custom_error = error
     try:
         return ask_once(messages, None, temperature)
     except Exception as error:
@@ -2079,6 +2190,21 @@ def ask_small(messages, max_tokens=600):
         if "404" in text or "does not exist" in text or "decommission" in text:
             return ask_once(messages)
         raise
+
+
+if CUSTOM_URL:
+    with st.expander("🧪 اپنے سرور کا ٹیسٹ"):
+        if st.button("ٹیسٹ کریں", key="custom_test"):
+            with st.spinner("سرور سے رابطہ ہو رہا ہے..."):
+                raw_reply, test_error = custom_call(
+                    [{"role": "user", "content": "Say hello in one short sentence."}], 0.2
+                )
+            if test_error:
+                st.error("رابطہ نہیں ہوا: " + test_error)
+            else:
+                st.success("رابطہ ہو گیا۔ سرور کا اصل جواب نیچے ہے:")
+                st.code(raw_reply[:600])
+                st.write("ایپ کو جو متن سمجھ آیا:", parse_custom_reply(raw_reply) or "(کچھ نہیں)")
 
 
 def has_devanagari(text):
@@ -2310,8 +2436,9 @@ except TypeError:
         prompt = st.chat_input("Ask Quantum")
 
 camera_send = bool(send_cam and cam is not None)
+upload_send = bool(send_up and up_files)
 
-if prompt or camera_send:
+if prompt or camera_send or upload_send:
     user_text = (getattr(prompt, "text", prompt) if prompt else "") or ""
     files = list(getattr(prompt, "files", None) or []) if prompt else []
     images = []
@@ -2319,6 +2446,11 @@ if prompt or camera_send:
         files = [cam]
         user_text = (cam_text or "").strip()
         st.session_state.cam_n = st.session_state.get("cam_n", 0) + 1
+    if up_files and (upload_send or prompt) and not camera_send:
+        files = files + list(up_files)
+        if not user_text.strip():
+            user_text = (up_text or "").strip()
+        st.session_state.up_n = st.session_state.get("up_n", 0) + 1
 
     audio = getattr(prompt, "audio", None) if prompt else None
     if audio:
@@ -2601,7 +2733,7 @@ if prompt or camera_send:
                             }
                         system = system_text + extra + summary_block(summary_chars) + more
                         to_send = [{"role": "system", "content": system}] + history
-                        return fix_math(ask_model(to_send, temp) if temp else ask_model(to_send))
+                        return fix_math(ask_model(to_send, temp or 0.4, custom=use_custom))
 
                     try:
                         answer = attempt(VIDEO_CTX_CHARS, history_chars)
@@ -2615,6 +2747,14 @@ if prompt or camera_send:
                         answer = attempt(2500, 1200, 400)
                         search_note = (search_note + " ✂️ Context shortened").strip()
 
+                    custom_error = st.session_state.pop("custom_error", "")
+                    if st.session_state.pop("custom_used", False):
+                        search_note = (search_note + " 🏠 اپنے سرور سے جواب").strip()
+                    elif custom_error:
+                        search_note = (
+                            search_note + " ↪️ اپنا سرور نہیں ملا، Groq استعمال ہوا ("
+                            + custom_error[:80] + ")"
+                        ).strip()
                     if st.session_state.pop("used_backup", False):
                         search_note = (
                             search_note + " ↪️ Backup model (main daily limit reached)"
