@@ -860,7 +860,14 @@ def video_block(limit):
         "misheard. Never replace a name with a different one on your own; keep "
         "names as they appear in the transcript, and if a name looks wrong, say "
         "it may be misheard. If the user corrects a name, use the user's "
-        "spelling in this and all later answers."
+        "spelling in this and all later answers. "
+        "If the transcript is written in Devanagari (Hindi script), you must "
+        "convert it into Urdu script letter by letter, and be most careful with "
+        "names of people, places and organisations. Letter map: च=چ, छ=چھ, "
+        "ज=ج, झ=جھ, श=ش, ष=ش, स=س, ख=خ, ग=گ, घ=گھ, क=ک, फ=ف, ड=ڈ, ट=ٹ, "
+        "त=ت, थ=تھ, द=د, ध=دھ, ब=ب, भ=بھ, प=پ, म=م, न=ن, र=ر, ल=ل, व=و, "
+        "ह=ہ. For example बलोच is بلوچ (never بلوش) and श is never used for च. "
+        "Do not change a name into a different one."
     )
 
 
