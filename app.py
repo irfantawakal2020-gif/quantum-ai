@@ -16,7 +16,6 @@ import tempfile
 import textwrap
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape as xml_escape
-
 from openai import OpenAI
 from tavily import TavilyClient
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -28,8 +27,6 @@ AUDIO_MODEL = "whisper-large-v3"
 SMALL_MODEL = "openai/gpt-oss-20b"
 LOGO_FILE = "logo.png"
 MAX_HISTORY = 12
-MAX_IMAGES = 3
-
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
 HINTS = {
@@ -37,6 +34,7 @@ HINTS = {
     "اردو": "یہ ایک صاف اردو جملہ ہے۔",
     "Auto": "Hello, how are you? آپ کیسے ہیں؟",
 }
+
 
 def square_logo():
     """Crops a wide or tall logo to a square around the emblem. Returns a file path."""
@@ -77,117 +75,117 @@ st.set_page_config(
 CSS = """
 <style>
 .stApp {
-    background: radial-gradient(circle at top, #2a1458 0%, #120a28 45%, #0a0616 100%);
+  background: radial-gradient(circle at top, #2a1458 0%, #120a28 45%, #0a0616 100%);
 }
 [data-testid="stHeader"] { background: transparent; }
 [data-testid="stToolbar"] { display: none; }
 footer { visibility: hidden; }
 .block-container { max-width: 760px; padding-top: 2rem; }
 .qa-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 1.2rem;
 }
 .qa-logo {
-    width: 68px;
-    height: 68px;
-    border-radius: 18px;
-    object-fit: cover;
-    object-position: center;
-    box-shadow: 0 0 24px rgba(150, 90, 255, 0.6);
+  width: 68px;
+  height: 68px;
+  border-radius: 18px;
+  object-fit: cover;
+  object-position: center;
+  box-shadow: 0 0 24px rgba(150, 90, 255, 0.6);
 }
 .qa-title {
-    font-size: 2.3rem;
-    font-weight: 800;
-    line-height: 1.1;
-    background: linear-gradient(90deg, #f1ecff, #b88cff, #7c4dff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+  font-size: 2.3rem;
+  font-weight: 800;
+  line-height: 1.1;
+  background: linear-gradient(90deg, #f1ecff, #b88cff, #7c4dff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .qa-sub { color: #b9a8e6; font-size: 0.95rem; }
 .qa-welcome {
-    text-align: center;
-    color: #cfc2f5;
-    padding: 1.2rem;
-    margin: 1rem 0;
-    border: 1px dashed rgba(160, 110, 255, 0.4);
-    border-radius: 16px;
-    background: rgba(120, 70, 255, 0.08);
+  text-align: center;
+  color: #cfc2f5;
+  padding: 1.2rem;
+  margin: 1rem 0;
+  border: 1px dashed rgba(160, 110, 255, 0.4);
+  border-radius: 16px;
+  background: rgba(120, 70, 255, 0.08);
 }
 [data-testid="stChatMessage"] {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(160, 110, 255, 0.22);
-    border-radius: 20px 20px 20px 6px;
-    padding: 0.8rem 1rem;
-    max-width: 92%;
-    margin-right: auto;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(160, 110, 255, 0.22);
+  border-radius: 20px 20px 20px 6px;
+  padding: 0.8rem 1rem;
+  max-width: 92%;
+  margin-right: auto;
 }
 [data-testid="stChatMessage"]:has(.qa-u) {
-    flex-direction: row-reverse;
-    width: fit-content;
-    max-width: 85%;
-    margin-left: auto;
-    margin-right: 0;
-    background: linear-gradient(135deg, rgba(124, 58, 237, 0.5), rgba(76, 29, 149, 0.4));
-    border: 1px solid rgba(167, 139, 250, 0.55);
-    border-radius: 20px 20px 6px 20px;
+  flex-direction: row-reverse;
+  width: fit-content;
+  max-width: 85%;
+  margin-left: auto;
+  margin-right: 0;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.5), rgba(76, 29, 149, 0.4));
+  border: 1px solid rgba(167, 139, 250, 0.55);
+  border-radius: 20px 20px 6px 20px;
 }
 [data-testid="stElementContainer"]:has(.qa-u),
 .element-container:has(.qa-u) {
-    display: none;
+  display: none;
 }
 .katex-display {
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 0.3rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.3rem 0;
 }
 .katex { font-size: 1.08em; }
 [data-testid="stBottom"],
 [data-testid="stBottom"] > div {
-    background: transparent !important;
+  background: transparent !important;
 }
 [data-testid="stBottomBlockContainer"] {
-    padding-bottom: 1.8rem;
+  padding-bottom: 1.8rem;
 }
 [data-testid="stChatInput"] {
-    border: 1px solid #8b5cf6;
-    border-radius: 32px !important;
-    box-shadow:
-        0 0 10px 2px rgba(109, 40, 217, 0.55),
-        0 0 28px 6px rgba(76, 29, 149, 0.45);
-    animation: qaGlow 3s ease-in-out infinite;
+  border: 1px solid #8b5cf6;
+  border-radius: 32px !important;
+  box-shadow:
+    0 0 10px 2px rgba(109, 40, 217, 0.55),
+    0 0 28px 6px rgba(76, 29, 149, 0.45);
+  animation: qaGlow 3s ease-in-out infinite;
 }
 [data-testid="stChatInput"] > div,
 [data-testid="stChatInput"] > div > div {
-    border-radius: 32px !important;
+  border-radius: 32px !important;
 }
 [data-testid="stChatInput"] textarea {
-    border-radius: 32px !important;
-    padding-left: 1.4rem !important;
+  border-radius: 32px !important;
+  padding-left: 1.4rem !important;
 }
 [data-testid="stChatInputSubmitButton"],
 [data-testid="stChatInput"] button {
-    border-radius: 50% !important;
-    aspect-ratio: 1 / 1;
+  border-radius: 50% !important;
+  aspect-ratio: 1 / 1;
 }
 [data-testid="stChatInput"]:focus-within {
-    animation: none;
-    box-shadow:
-        0 0 14px 4px rgba(139, 92, 246, 0.85),
-        0 0 44px 12px rgba(91, 33, 182, 0.6);
+  animation: none;
+  box-shadow:
+    0 0 14px 4px rgba(139, 92, 246, 0.85),
+    0 0 44px 12px rgba(91, 33, 182, 0.6);
 }
 @keyframes qaGlow {
-    0%, 100% {
-        box-shadow:
-            0 0 8px 1px rgba(109, 40, 217, 0.45),
-            0 0 22px 4px rgba(76, 29, 149, 0.35);
-    }
-    50% {
-        box-shadow:
-            0 0 14px 3px rgba(139, 92, 246, 0.7),
-            0 0 38px 9px rgba(91, 33, 182, 0.55);
-    }
+  0%, 100% {
+    box-shadow:
+      0 0 8px 1px rgba(109, 40, 217, 0.45),
+      0 0 22px 4px rgba(76, 29, 149, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 14px 3px rgba(139, 92, 246, 0.7),
+      0 0 38px 9px rgba(91, 33, 182, 0.55);
+  }
 }
 </style>
 """
@@ -215,146 +213,17 @@ mic_choice = st.radio(
     ["Auto", "English", "اردو"],
     horizontal=True,
 )
-
 speak_on = st.toggle("🔊 Read answers aloud", value=False)
-ai_on = st.toggle(
-    "🎙️ AI transcript for videos without captions (uses Supadata credits)",
+fix_on = st.toggle(
+    "✍️ اردو املا کی جانچ (ہر اردو جواب پر ایک اضافی درخواست لگتی ہے)",
     value=True,
 )
-# ---------- Photo picker: its own camera/gallery buttons, no Streamlit upload needed ----------
-PICKER_HTML = r"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<style>
-  html, body { margin: 0; padding: 0; background: transparent;
-    font-family: Arial, Helvetica, sans-serif; color: #e9e2ff; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .btn { position: relative; overflow: hidden; display: inline-block; background: #6d28d9;
-    color: #fff; border-radius: 22px; padding: 12px 18px; font-size: 16px; cursor: pointer;
-    user-select: none; }
-  .btn.clear { background: #3b2a6b; display: none; }
-  .btn input { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    opacity: 0; cursor: pointer; font-size: 0; }
-  .thumbs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-  .thumbs img { height: 72px; border-radius: 8px; border: 1px solid #8b5cf6; }
-  #msg { margin-top: 8px; font-size: 14px; color: #cfc2f5; min-height: 4px; }
-</style></head>
-<body>
-<div class="row">
-  <div class="btn">📷 Camera<input id="cam" type="file" accept="image/*" capture="environment"></div>
-  <div class="btn">🖼️ Gallery<input id="gal" type="file" accept="image/*" multiple></div>
-  <div class="btn clear" id="clear">🗑️ Clear</div>
-</div>
-<div class="thumbs" id="thumbs"></div>
-<div id="msg"></div>
-<script>
-var MAX_SIDE = 2000, QUALITY = 0.9, MAX_PHOTOS = 3;
-var photos = [];
-var msg = document.getElementById("msg");
-var thumbs = document.getElementById("thumbs");
-var clearBtn = document.getElementById("clear");
-
-function post(type, extra) {
-  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
-}
-function resize() {
-  post("streamlit:setFrameHeight", { height: Math.max(64, document.documentElement.scrollHeight + 4) });
-}
-function publish() {
-  post("streamlit:setComponentValue", { value: { photos: photos }, dataType: "json" });
-}
-function draw() {
-  thumbs.innerHTML = "";
-  photos.forEach(function (p) {
-    var img = document.createElement("img");
-    img.src = p.data;
-    thumbs.appendChild(img);
-  });
-  clearBtn.style.display = photos.length ? "inline-block" : "none";
-  if (photos.length) { msg.textContent = "✅ " + photos.length + " photo(s) ready"; }
-  resize();
-}
-async function toJpeg(file) {
-  var source;
-  try {
-    source = await createImageBitmap(file, { imageOrientation: "from-image" });
-  } catch (e) {
-    source = await new Promise(function (resolve, reject) {
-      var img = new Image();
-      img.onload = function () { resolve(img); };
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
-    });
-  }
-  var w = source.width, h = source.height;
-  var scale = Math.min(1, MAX_SIDE / Math.max(w, h));
-  var canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(w * scale));
-  canvas.height = Math.max(1, Math.round(h * scale));
-  var ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", QUALITY);
-}
-async function handle(files) {
-  msg.textContent = "⏳ Preparing the photo...";
-  var list = Array.prototype.slice.call(files);
-  for (var i = 0; i < list.length; i++) {
-    if (photos.length >= MAX_PHOTOS) { msg.textContent = "Only " + MAX_PHOTOS + " photos at a time."; break; }
-    try {
-      var data = await toJpeg(list[i]);
-      photos.push({ id: Date.now() + "-" + photos.length, name: list[i].name || "photo.jpg", data: data });
-    } catch (e) {
-      msg.textContent = "⚠️ This browser cannot open " + (list[i].name || "that file") + ". Try a jpg or png photo.";
-    }
-  }
-  draw();
-  publish();
-}
-["cam", "gal"].forEach(function (id) {
-  var input = document.getElementById(id);
-  input.addEventListener("change", function () {
-    if (input.files && input.files.length) { handle(input.files); }
-    input.value = "";
-  });
-});
-clearBtn.addEventListener("click", function () {
-  photos = [];
-  msg.textContent = "";
-  draw();
-  publish();
-});
-window.addEventListener("message", function (event) {
-  if (event.data && event.data.type === "streamlit:render") { resize(); }
-});
-post("streamlit:componentReady", { apiVersion: 1 });
-resize();
-</script>
-</body></html>"""
-
-
-def make_photo_picker():
-    """Registers the photo picker component. Returns None if that is not possible."""
-    try:
-        folder = os.path.join(tempfile.gettempdir(), "quantum_ai_photo_picker")
-        os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, "index.html")
-        current = ""
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                current = f.read()
-        if current != PICKER_HTML:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(PICKER_HTML)
-        return components.declare_component("quantum_photo_picker", path=folder)
-    except Exception:
-        return None
-
-
-photo_picker = make_photo_picker()
-
+ai_on = st.toggle(
+    "🎙 AI transcript for videos without captions (uses Supadata credits)",
+    value=True,
+)
 camera_on = st.toggle(
-    "📷 Quick camera (low quality). For sharp photos use the photo picker below",
+    "📷 Quick camera (low quality). For sharp photos use the + button, then Camera",
     value=False,
 )
 cam, cam_text, send_cam = None, "", False
@@ -367,25 +236,6 @@ if camera_on:
     send_cam = st.button(
         "📤 Send photo", key="camsend_%d" % cam_n, disabled=cam is None
     )
-
-pending_photos = []
-send_picked = False
-if photo_picker is not None:
-    picker_n = st.session_state.get("picker_n", 0)
-    with st.expander("📷 Photo: camera or gallery (use this if the + button fails)"):
-        picked = photo_picker(key="picker_%d" % picker_n, default=None)
-        if isinstance(picked, dict):
-            for item in (picked.get("photos") or [])[:MAX_IMAGES]:
-                try:
-                    pending_photos.append(base64.b64decode(item["data"].split(",", 1)[1]))
-                except Exception:
-                    pass
-        if pending_photos:
-            st.caption(
-                "✅ %d photo(s) ready. Type your question below and send, or press "
-                "the button." % len(pending_photos)
-            )
-            send_picked = st.button("📤 Send photo(s) now", key="picksend_%d" % picker_n)
 
 UNLOCK_HTML = r"""
 <script>
@@ -408,7 +258,6 @@ try {
 } catch (e) {}
 </script>
 """
-
 if speak_on:
     components.html(UNLOCK_HTML, height=0)
 
@@ -459,6 +308,14 @@ system_text = (
     "guessing. In Roman Urdu use the common simple spellings consistently, for "
     "example: hai, nahi, kyun, kaise, aap, tafseel. Reread your answer once "
     "before sending it and fix any spelling mistake. "
+    "URDU WRITING QUALITY: in Urdu script prefer short, simple sentences and "
+    "common everyday words. If you are not sure of a rare or literary word, use "
+    "a simpler word you are sure about. Never invent words and never glue two "
+    "words together. Always use the Urdu letters ی ک ہ (never the Arabic letters "
+    "ي ك ه). Write these correctly and separately: کے لیے, اس کی, اس کے, ان کا, "
+    "ان کی, جس کا, کیونکہ, نہیں, میں, ہیں, چاہیے, کیا, گیا, لیکن, بھی, اگر, "
+    "تو, پھر, جبکہ, یعنی. Do not put any Chinese, Russian, Thai or Devanagari "
+    "characters inside an Urdu answer. "
     "CONVERSATION: pay attention to the whole conversation and to what the user "
     "really means, not only to the last message. Never repeat an earlier answer "
     "word for word. If the user says they did not understand, asks the same "
@@ -470,7 +327,7 @@ system_text = (
     "BUT whenever the user asks for details, a detailed or full explanation, an "
     "explanation of a difference or comparison, a summary of a topic, or uses "
     "words like detail, detailed, explain, in depth, تفصیل, تفصیل سے, سمجھاؤ, "
-    "وضاحت, فرق, tafseel, tafsil, detail ke sath, तफ़सील, ब्योरा, then write a "
+    "فرق, وضاحت, tafseel, tafsil, detail ke sath, तफ़सील, ब्योरा, then write a "
     "thorough answer of about 250 to 500 words, organized with short headings or "
     "bullet points: clear definitions, the key points, examples, and a short "
     "summary. For a difference or comparison, cover each side separately and "
@@ -487,7 +344,6 @@ system_text = (
 )
 
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GROK_API_KEY")
-
 if not API_KEY:
     st.error("API key نہیں ملی۔ Streamlit secrets میں GROQ_API_KEY شامل کریں۔")
     st.stop()
@@ -500,7 +356,6 @@ client = OpenAI(
 # ---------- Web search (Tavily) ----------
 TAVILY_KEY = st.secrets.get("TAVILY_API_KEY")
 tavily = TavilyClient(api_key=TAVILY_KEY) if TAVILY_KEY else None
-
 
 SEARCH_WORDS = [
     "president", "prime minister", "minister", "ceo", "current", "latest",
@@ -1016,7 +871,7 @@ IMAGE_NOUNS = re.compile(
     r"\b(image|images|picture|pictures|photo|photos|pic|pics|logo|painting|"
     r"drawing|sketch|wallpaper|poster|tasveer|tasweer|tasvir|face|faces|chehra|"
     r"diagram|diagrams|flowchart|illustration)\b"
-    r"|تصویر|فوٹو|چہرہ|ڈایاگرام|ڈائیگرام|خاکہ|तस्वीर|फोटो|चित्र|चेहरा|आरेख",
+    r"|خاکہ|ڈائیگرام|ڈایاگرام|چہرہ|فوٹو|تصویر|तस्वीर|फोटो|चित्र|चेहरा|आरेख",
     re.I,
 )
 IMAGE_VERBS = re.compile(
@@ -1024,24 +879,20 @@ IMAGE_VERBS = re.compile(
     r"|بنا|बना|बनाओ|ڈرا",
     re.I,
 )
-
-
 DRAW_WORDS = re.compile(
     r"\b(draw|paint|sketch|illustrate|portrait|cartoon|render)\b|ڈرا|पेंट|स्केच",
     re.I,
 )
-
-
 NO_DRAW = re.compile(
     r"(?i)\b(don'?t|do not|dont|no|without|never)\s+(?:\w+\s+){0,2}"
     r"(draw|diagram|picture|image|sketch|chart)\b"
     r"|\b(draw|diagram|picture|image|sketch|chart|tasveer)\s+(?:\w+\s+){0,2}"
     r"(mat|na\s+(?:banao|bana))\b"
-    r"|(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)\s*(?:\S+\s+){0,2}(مت|نہ)\b"
-    r"|\b(مت|نہ)\s*(?:\S+\s+){0,1}(ڈرا|بنانا|بناؤ|ڈایاگرام)"
+    r"|(ڈرا|بنانا|بناؤ|ڈایاگرام|ڈائیگرام|تصویر|خاکہ)\s+(?:\S+\s+){0,2}(مت|نہ)"
+    r"|(مت|نہ)\s+(?:\S+\s+){0,2}(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)"
     r"|(डायग्राम|चित्र|तस्वीर)\s*(?:\S+\s+){0,2}(मत|न)\b"
     r"|मत\s+(बनाओ|बनाना)"
-    r"|بغیر\s*(?:\S+\s+){0,1}(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)"
+    r"|بغیر\s+(?:\S+\s+){0,1}(ڈایاگرام|ڈائیگرام|تصویر|ڈرا|خاکہ)"
     r"|बिना\s+(?:\S+\s+){0,1}(डायग्राम|चित्र|तस्वीर)"
     r"|\b(bina|bagair|baghair)\s+(?:\w+\s+){0,1}(diagram|tasveer|picture|image)\b"
 )
@@ -1058,13 +909,11 @@ def is_image_request(text):
 REFUSAL_LIKE = re.compile(
     r"(?i)^(i'?m sorry|i am sorry|sorry|i can'?t|i cannot|i am unable|i'?m unable|as an ai)"
 )
-
-
 TEACH_WORDS = re.compile(
     r"(?i)\b(explain|explanation|understand|teach|law|laws|theory|concept|principle|"
     r"formula|process|cycle|structure|working|how does|how do|difference|differences|"
     r"compare|comparison|versus|vs|samjh\w*|samajh\w*|qanoon|farq|nizam)\b"
-    r"|سمجھ|وضاحت|قانون|فرق|اصول|نظریہ|समझ|नियम|फर्क|अंतर|सिद्धांत"
+    r"|نظریہ|اصول|فرق|قانون|وضاحت|سمجھ|समझ|नियम|फर्क|अंतर|सिद्धांत"
 )
 ART_WORDS = re.compile(
     r"(?i)\b(cartoon|anime|portrait|logo|poster|wallpaper|landscape|painting|"
@@ -1092,7 +941,7 @@ def last_image_request(history):
 
 
 def parse_plan(text, last):
-    """Returns (kind, text). kind: PICTURE, DIAGRAM, REFUSE or '' (not a request)."""
+    """Returns (kind, text). kind: PICTURE, DIAGRAM, PHOTO, REFUSE or '' (not a request)."""
     text = (text or "").strip().strip('"').strip()
     upper = text.upper()
     if not text or upper.rstrip(".!") == "NO":
@@ -1130,8 +979,8 @@ def make_image_plan(history):
                         "what to compare>\n"
                         "PHOTO: <English web search query for REAL existing "
                         "photographs>\n"
-                        "NO  (the message is not a request to create an image)\n"
-                        "REFUSE  (only for sexual content, graphic violence or "
+                        "NO (the message is not a request to create an image)\n"
+                        "REFUSE (only for sexual content, graphic violence or "
                         "gore, hateful content, or harmful or deceptive images "
                         "of real people)\n"
                         "Rules: Use DIAGRAM for science, maths, geography, "
@@ -1399,14 +1248,15 @@ def render_atom(spec):
         net = panel["protons"] - electrons
         charge = "0 (neutral)" if net == 0 else ("%+d" % net)
         below = int(cy + tallest + 36)
-        body += svg_text(cx, below, "Protons: %d   Electrons: %d" % (panel["protons"], electrons),
+        body += svg_text(cx, below, "Protons: %d Electrons: %d" % (panel["protons"], electrons),
                          15, "middle", width=int(panel_w / 8))
         body += svg_text(cx, below + 24, "Net charge: " + charge, 16, "middle", "bold",
                          fill="#b91c1c" if net else "#047857", width=int(panel_w / 8))
         if panel.get("note"):
             body += svg_text(cx, below + 56, panel["note"], 14, "middle", style="italic",
                              fill="#374151", width=int(panel_w / 7.6), max_lines=3)
-    return svg_frame(body, int(cy + tallest + 36 + 56 + 70), spec["title"], spec.get("explanation", ""))
+    return svg_frame(body, int(cy + tallest + 36 + 56 + 70), spec["title"],
+                     spec.get("explanation", ""))
 
 
 def render_flow(spec):
@@ -1758,11 +1608,13 @@ def generate_image(prompt):
 
 
 # ---------- Photos: the user sends a picture, a vision model reads it ----------
+MAX_IMAGES = 3
 MAX_SIDE = 2000
 DEFAULT_IMAGE_QUESTION = (
     "اس تصویر کا تفصیل سے تجزیہ کرو اور بتاؤ اس میں کیا ہے۔ اگر اس میں کوئی "
     "سوال یا مسئلہ ہو تو اسے قدم بہ قدم حل کرو۔"
 )
+DEFAULT_DOC_QUESTION = "اس فائل کا خلاصہ اور اہم نکات بتاؤ۔"
 VISION_MODELS = [
     m for m in (
         st.secrets.get("VISION_MODEL"),
@@ -1770,7 +1622,6 @@ VISION_MODELS = [
         "meta-llama/llama-4-scout-17b-16e-instruct",
     ) if m
 ]
-
 
 try:  # iPhone HEIC photos, if the optional package is installed
     import pillow_heif
@@ -1783,7 +1634,7 @@ PATTERN_WORDS = re.compile(
     r"(?i)\b(pattern|example|method|approach|template|same way|same style|same format|"
     r"like this|learn|follow|tarika|tareeqa|tariqa|isi tarah|isi tarhan|misal|seekh|"
     r"dekh\s*lo|dekho)\b"
-    r"|پیٹرن|طریقہ|طریقے|اسی طرح|اسی انداز|مثال|سیکھ|دیکھ لو|انداز|नमूना|तरीका|"
+    r"|तरीका|नमूना|پیٹرن|طریقہ|طریقے|اسی طرح|اسی انداز|مثال|سیکھ|دیکھ لو|انداز|"
     r"पैटर्न|इसी तरह|उदाहरण"
 )
 UNCLEAR_WORDS = re.compile(
@@ -1958,7 +1809,38 @@ def image_block(limit=3500, fresh_reference=False):
     return text
 
 
-USER_AVATAR = "🧑‍💻"
+# ---------- Documents: PDF, TXT, CSV ... ----------
+DOC_TYPES = ("pdf", "txt", "csv", "md", "json")
+
+
+def read_document(data, ext):
+    """Returns the text of a PDF or text file, or '' if it could not be read."""
+    try:
+        if ext == "pdf":
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(data))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages[:30])
+        else:
+            text = data.decode("utf-8", errors="ignore")
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+    except Exception:
+        return ""
+
+
+def doc_block(limit=9000):
+    text = st.session_state.get("doc_text", "")
+    if not text:
+        return ""
+    return (
+        "The user uploaded document(s). Their text is below. You CAN use it. "
+        "Answer from it; if the text does not contain the answer, say so. "
+        "Do not invent things.\n"
+        "=== DOCUMENT START ===\n" + text[:limit] + "\n=== DOCUMENT END ==="
+    )
+
+
+USER_AVATAR = "🧑"
 BOT_AVATAR = logo_path or "🤖"
 
 if "messages" not in st.session_state:
@@ -1984,7 +1866,6 @@ const synth = host.speechSynthesis;
 const Utter = host.SpeechSynthesisUtterance;
 const hint = document.getElementById("hint");
 let started = false;
-
 function pickVoice(lang) {
   const voices = synth.getVoices() || [];
   const prefix = lang.slice(0, 2).toLowerCase();
@@ -1994,7 +1875,6 @@ function pickVoice(lang) {
   }
   return null;
 }
-
 function speakNow() {
   if (!synth || !Utter) { hint.textContent = "Speech not supported"; return; }
   started = false;
@@ -2016,7 +1896,6 @@ function speakNow() {
     if (!started) { hint.textContent = "No sound? Tap Listen."; }
   }, 2500);
 }
-
 document.getElementById("listen").onclick = function () {
   if (synth) { synth.cancel(); }
   setTimeout(speakNow, 150);
@@ -2024,7 +1903,6 @@ document.getElementById("listen").onclick = function () {
 document.getElementById("stop").onclick = function () {
   if (synth) { synth.cancel(); }
 };
-
 if (synth && (synth.speaking || synth.pending)) {
   synth.cancel();
   setTimeout(speakNow, 150);
@@ -2076,7 +1954,8 @@ def fix_math(text):
     return text.strip()
 
 
-def ask_once(messages, model=None, temperature=0.55):
+# ---------- Model calls ----------
+def ask_once(messages, model=None, temperature=0.4):
     model = model or MODEL_NAME
     try:
         result = client.chat.completions.create(
@@ -2107,7 +1986,7 @@ def rate_limit_wait(error):
     return int(found.group(1) or 0) * 60 + float(found.group(2))
 
 
-def ask_model(messages, temperature=0.55):
+def ask_model(messages, temperature=0.4):
     """Main model. Short rate limit: wait and retry. Daily limit: backup model."""
     try:
         return ask_once(messages, None, temperature)
@@ -2180,6 +2059,96 @@ def to_urdu_script(text):
         return text
 
 
+# ---------- Urdu spelling: cleaning and proofreading of the answer ----------
+ARABIC_FIXES = {"ي": "ی", "ى": "ی", "ك": "ک", "ه": "ہ", "ة": "ہ"}
+STRAY_SCRIPTS = re.compile(
+    r"[\u0400-\u04FF\u0E00-\u0E7F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]"
+)
+PROTECT = re.compile(
+    r"```.*?```|\$\$.*?\$\$|\$[^$\n]+?\$|https?://\S+|`[^`\n]+`", re.S
+)
+PROOF_SYSTEM = (
+    "You are a professional Urdu proofreader, like a copy editor at a Pakistani "
+    "newspaper. The user gives you a text written by an AI. Fix ONLY spelling "
+    "and writing mistakes: wrong, missing, extra or swapped letters; words "
+    "wrongly joined or wrongly split; Hindi or Arabic spellings used instead of "
+    "standard Pakistani Urdu spelling; wrong letters such as ي ك ه instead of "
+    "ی ک ہ; stray characters from other scripts. Write postpositions as "
+    "separate words, for example: اس کی (not اسکی), ان کا (not انکا), جس کے (not "
+    "جسکے), کے لیے (not کیلئے or کیلیے). If a sentence contains Devanagari "
+    "(Hindi) words, write them in Urdu script. Do NOT change the meaning, the "
+    "wording, the order, the numbers, the English words, the emojis, the "
+    "markdown (headings, bullets, tables, bold) or any token that looks like "
+    "ZX0ZX, ZX1ZX and so on: copy such tokens exactly. Do not translate, do "
+    "not add or remove sentences, do not explain anything. If a word is "
+    "already correct, keep it exactly. Output only the corrected text."
+)
+
+
+def urdu_ratio(text):
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return 0.0
+    arabic = sum(
+        1 for c in letters if "\u0600" <= c <= "\u06FF" or "\u0750" <= c <= "\u077F"
+    )
+    return arabic / len(letters)
+
+
+def protect_parts(text):
+    """Replaces code, formulas and links with tokens so the proofreader cannot touch them."""
+    saved = []
+
+    def keep(match):
+        saved.append(match.group(0))
+        return "ZX%dZX" % (len(saved) - 1)
+
+    return PROTECT.sub(keep, text), saved
+
+
+def proofread_urdu(text):
+    """Second pass: a low-temperature proofreader. Returns the original if anything looks wrong."""
+    masked, saved = protect_parts(text)
+    try:
+        result = ask_once(
+            [
+                {"role": "system", "content": PROOF_SYSTEM},
+                {"role": "user", "content": masked},
+            ],
+            MODEL_NAME,
+            0.1,
+        )
+    except Exception:
+        return text
+    result = re.sub(r"(?s)<think>.*?</think>", "", result or "").strip()
+    if not result:
+        return text
+    ratio = len(result) / max(1, len(masked))
+    if not 0.7 <= ratio <= 1.3:
+        return text
+    if abs(result.count("\n") - masked.count("\n")) > 3 + masked.count("\n") * 0.3:
+        return text
+    for index in range(len(saved)):
+        if result.count("ZX%dZX" % index) != 1:
+            return text
+    for index, original in enumerate(saved):
+        result = result.replace("ZX%dZX" % index, original)
+    return result
+
+
+def polish_urdu(text, spell_check=True):
+    """Cleans Urdu answers. Returns (text, changed_by_proofreader)."""
+    if not text or urdu_ratio(text) < 0.3:
+        return text, False
+    for bad, good in ARABIC_FIXES.items():
+        text = text.replace(bad, good)
+    text = STRAY_SCRIPTS.sub("", text)
+    if spell_check:
+        fixed = proofread_urdu(text)
+        return fixed, fixed != text
+    return text, False
+
+
 def transcribe(audio_bytes):
     options = {}
     code = LANG_CODES.get(mic_choice)
@@ -2196,6 +2165,16 @@ def transcribe(audio_bytes):
     detected = (getattr(result, "language", "") or "").lower()
     text = (result.text or "").strip()
     if not code and detected and detected not in ALLOWED_LANGS:
+        # Whisper often labels spoken Urdu as Persian, Arabic or Punjabi: try again as Urdu
+        if detected in ("persian", "farsi", "arabic", "pashto", "punjabi", "sindhi"):
+            retry = client.audio.transcriptions.create(
+                model=AUDIO_MODEL,
+                file=("voice.wav", audio_bytes),
+                temperature=0,
+                prompt=HINTS["اردو"],
+                language="ur",
+            )
+            return (retry.text or "").strip()
         return None
     return text
 
@@ -2230,10 +2209,11 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None,
 
 
 if st.session_state.messages:
-    if st.button("🗑️ New chat"):
+    if st.button("🗑 New chat"):
         st.session_state.messages = []
         for key in ("video_id", "video_text", "video_title", "image_info",
-                    "reference_info", "reference_task", "chat_summary", "summary_upto"):
+                    "reference_info", "reference_task", "chat_summary",
+                    "summary_upto", "doc_text"):
             st.session_state.pop(key, None)
         st.rerun()
 else:
@@ -2256,24 +2236,27 @@ for index, message in enumerate(st.session_state.messages):
         message.get("images"),
     )
 
+IMAGE_TYPES = ["png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "tif",
+               "tiff", "heic", "heif", "avif"]
 try:
     prompt = st.chat_input(
         "Ask Quantum",
         accept_audio=True,
         accept_file="multiple",
-        file_type=["png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "tif",
-                   "tiff", "heic", "heif", "avif"],
+        file_type=IMAGE_TYPES + list(DOC_TYPES),
     )
 except TypeError:
-    prompt = st.chat_input("Ask Quantum", accept_audio=True)
+    try:
+        prompt = st.chat_input("Ask Quantum", accept_audio=True)
+    except TypeError:
+        prompt = st.chat_input("Ask Quantum")
 
 camera_send = bool(send_cam and cam is not None)
 
-if prompt or camera_send or send_picked:
-    user_text = (prompt.text if prompt else "") or ""
+if prompt or camera_send:
+    user_text = (getattr(prompt, "text", prompt) if prompt else "") or ""
     files = list(getattr(prompt, "files", None) or []) if prompt else []
     images = []
-
     if camera_send:
         files = [cam]
         user_text = (cam_text or "").strip()
@@ -2286,7 +2269,7 @@ if prompt or camera_send or send_picked:
             if spoken is None:
                 st.warning(
                     "آواز کی زبان پہچانی نہیں گئی۔ اوپر Mic language میں "
-                    "English یا اردو چن کر دوبارہ بولیں۔"
+                    "اردو یا English چن کر دوبارہ بولیں۔"
                 )
             elif spoken:
                 if has_devanagari(spoken):
@@ -2296,32 +2279,41 @@ if prompt or camera_send or send_picked:
             st.error("Voice error: " + str(error))
 
     failed = []
-    for file in files[:MAX_IMAGES]:
-        prepared = prepare_image(file.getvalue())
-        if prepared:
-            images.append(prepared)
+    doc_texts = []
+    skipped = 0
+    for file in files:
+        name = getattr(file, "name", "file")
+        ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+        if ext in DOC_TYPES:
+            doc = read_document(file.getvalue(), ext)
+            if doc:
+                doc_texts.append("FILE: " + name + "\n" + doc)
+            else:
+                failed.append(name)
+        elif len(images) < MAX_IMAGES:
+            prepared = prepare_image(file.getvalue())
+            if prepared:
+                images.append(prepared)
+            else:
+                failed.append(name)
         else:
-            failed.append(getattr(file, "name", "file"))
-    for raw in pending_photos[: max(0, MAX_IMAGES - len(images))]:
-        prepared = prepare_image(raw)
-        if prepared:
-            images.append(prepared)
-        else:
-            failed.append("photo")
-    if pending_photos:
-        st.session_state.picker_n = st.session_state.get("picker_n", 0) + 1
-    if len(files) > MAX_IMAGES:
+            skipped += 1
+    if doc_texts:
+        st.session_state.doc_text = "\n\n".join(doc_texts)[:12000]
+    if skipped:
         st.info("ایک وقت میں صرف پہلی %d تصاویر استعمال ہوتی ہیں۔" % MAX_IMAGES)
     if failed:
         st.warning(
-            "یہ فائلیں تصویر کے طور پر نہیں کھل سکیں: " + "، ".join(failed)
-            + "۔ اگر یہ آئی فون کی HEIC تصویر ہے تو اسے jpg میں بدل کر بھیجیں۔"
+            "یہ فائلیں نہیں کھل سکیں: " + "، ".join(failed) + "۔ اگر یہ آئی فون کی "
+            "HEIC تصویر ہے تو اسے jpg میں بدل کر بھیجیں۔ اسکین شدہ PDF کا ٹیکسٹ "
+            "نہیں پڑھا جا سکتا، اس کی تصویر بھیج دیں۔"
         )
-    if (files or pending_photos) and not images:
+    if files and not images and not doc_texts:
         st.stop()
     if images and not user_text.strip():
         user_text = DEFAULT_IMAGE_QUESTION
-
+    if doc_texts and not user_text.strip():
+        user_text = DEFAULT_DOC_QUESTION
     if not user_text.strip():
         st.stop()
 
@@ -2331,7 +2323,12 @@ if prompt or camera_send or send_picked:
     st.session_state.messages.append(new_message)
     show_message("user", user_text, user_images=images)
 
-    if is_image_request(user_text) and not find_youtube_id(user_text) and not images:
+    if (
+        is_image_request(user_text)
+        and not find_youtube_id(user_text)
+        and not images
+        and not doc_texts
+    ):
         with st.chat_message("assistant", avatar=BOT_AVATAR):
             with st.spinner("🎨 تصویر بن رہی ہے..."):
                 kind, plan = make_image_plan(st.session_state.messages)
@@ -2388,16 +2385,15 @@ if prompt or camera_send or send_picked:
                 )
                 st.stop()
             elif kind:
-                st.error(
-                    ("⚠️ تصاویر نہیں مل سکیں: " if kind == "PHOTO"
-                     else "⚠️ تصویر نہیں بن سکی: ") + img_err
-                )
+                if kind == "PHOTO":
+                    st.error("⚠️ تصاویر نہیں مل سکیں: " + str(img_err))
+                else:
+                    st.error("⚠️ تصویر نہیں بن سکی: (" + str(img_err) + ")")
                 st.session_state.messages.pop()
                 st.stop()
             # kind == "": not an image request after all, continue normally
 
     recent = st.session_state.messages[-MAX_HISTORY:]
-
     with st.chat_message("assistant", avatar=BOT_AVATAR):
         text_box = st.container()
         speak_box = st.container()
@@ -2407,7 +2403,6 @@ if prompt or camera_send or send_picked:
         sources = []
         image_read = ""
         fresh_reference = False
-
         with text_box:
             with st.spinner("Thinking..."):
                 try:
@@ -2428,7 +2423,7 @@ if prompt or camera_send or send_picked:
                                 image_note = "📌 Reference example saved"
                             else:
                                 st.session_state.image_info = description
-                                image_note = "🖼️ Image analyzed"
+                                image_note = "🖼 Image analyzed"
                             if unclear_score(description) >= 3:
                                 image_note += " (parts unclear: retake closer, brighter, straighter)"
                         else:
@@ -2439,11 +2434,14 @@ if prompt or camera_send or send_picked:
                                 "analyzed. Do NOT guess what it shows; tell the "
                                 "user honestly that the photo could not be read."
                             )
+
                     vid = find_youtube_id(user_text)
                     if vid and vid != st.session_state.get("video_id"):
                         for key in ("video_id", "video_text", "video_title"):
                             st.session_state.pop(key, None)
-                        transcript, yt_err = youtube_transcript(vid) or ("", "no result returned")
+                        transcript, yt_err = youtube_transcript(vid) or (
+                            "", "no result returned"
+                        )
                         if transcript:
                             st.session_state.video_id = vid
                             st.session_state.video_text = transcript
@@ -2451,7 +2449,8 @@ if prompt or camera_send or send_picked:
                             video_note = "🎬 YouTube transcript loaded"
                         else:
                             video_note = "⚠️ YouTube transcript failed: " + yt_err
-                    if vid or images:
+
+                    if vid or images or doc_texts:
                         plan, qwarn = None, ""
                     else:
                         plan, qwarn = make_search_plan(st.session_state.messages) or (
@@ -2486,6 +2485,7 @@ if prompt or camera_send or send_picked:
                             )
                         else:
                             search_note = "⚠️ Search failed: " + (err or "no results")
+
                     if vid and not st.session_state.get("video_text"):
                         extra += (
                             "\n\nThe user shared a YouTube link but its transcript "
@@ -2493,11 +2493,12 @@ if prompt or camera_send or send_picked:
                             "contains. Tell the user honestly that you could not "
                             "read this video."
                         )
-                    if not query and not qwarn and not vid and not images:
+                    if not query and not qwarn and not vid and not images and not doc_texts:
                         search_note = "ℹ️ No web search for this question"
                     search_note = (
-                        video_note + "  " + image_note + "  " + qwarn + "  " + search_note
+                        video_note + " " + image_note + " " + qwarn + " " + search_note
                     ).strip()
+
                     has_video = bool(st.session_state.get("video_text"))
                     history_chars = (
                         HISTORY_CHARS_WITH_VIDEO if has_video else HISTORY_CHARS
@@ -2518,7 +2519,10 @@ if prompt or camera_send or send_picked:
                             3500 if video_limit >= VIDEO_CTX_CHARS else 1500,
                             fresh_reference,
                         )
-                        prefix = "\n\n".join(t for t in (video_text, image_text) if t)
+                        doc_text = doc_block(9000 if video_limit >= VIDEO_CTX_CHARS else 3000)
+                        prefix = "\n\n".join(
+                            t for t in (video_text, image_text, doc_text) if t
+                        )
                         if prefix and history:
                             last = history[-1]
                             history[-1] = {
@@ -2541,11 +2545,13 @@ if prompt or camera_send or send_picked:
                         if not too_big:
                             raise
                         answer = attempt(2500, 1200, 400)
-                        search_note = (search_note + "  ✂️ Context shortened").strip()
+                        search_note = (search_note + " ✂️ Context shortened").strip()
+
                     if st.session_state.pop("used_backup", False):
                         search_note = (
-                            search_note + "  ↪️ Backup model (main daily limit reached)"
+                            search_note + " ↪️ Backup model (main daily limit reached)"
                         ).strip()
+
                     previous_answer = last_answer_text(st.session_state.messages)
                     if previous_answer and too_similar(answer, previous_answer):
                         try:
@@ -2556,20 +2562,25 @@ if prompt or camera_send or send_picked:
                             if retry.strip() and not too_similar(retry, previous_answer):
                                 answer = retry
                                 search_note = (
-                                    search_note + "  🔁 Avoided repeating the last answer"
+                                    search_note + " 🔁 Avoided repeating the last answer"
                                 ).strip()
                         except Exception:
                             pass
+
+                    # Urdu spelling: clean wrong letters, then proofread once
+                    answer, proofed = polish_urdu(answer, fix_on)
+                    if proofed:
+                        search_note = (search_note + " ✍️ اردو املا جانچا گیا").strip()
                 except Exception as error:
                     st.session_state.messages.pop()
                     msg = str(error)
                     if "429" in msg or "rate limit" in msg.lower():
                         if "(TPD)" in msg:
-                            kind = "روزانہ"
+                            limit_kind = "روزانہ"
                         elif "(TPM)" in msg:
-                            kind = "فی منٹ"
+                            limit_kind = "فی منٹ"
                         else:
-                            kind = "روزانہ یا فی منٹ"
+                            limit_kind = "روزانہ یا فی منٹ"
                         wait = rate_limit_wait(error)
                         if wait is None:
                             when = "کچھ دیر"
@@ -2578,7 +2589,7 @@ if prompt or camera_send or send_picked:
                         else:
                             when = "تقریباً " + str(int(wait) + 1) + " سیکنڈ"
                         st.error(
-                            "⏳ Groq کی " + kind + " مفت حد پوری ہو گئی ہے۔ "
+                            "⏳ Groq کی " + limit_kind + " مفت حد پوری ہو گئی ہے۔ "
                             + when + " بعد دوبارہ کوشش کریں۔"
                         )
                     else:
@@ -2595,7 +2606,7 @@ if prompt or camera_send or send_picked:
                     st.caption(search_note)
                 show_sources(sources)
                 if image_read:
-                    with st.expander("🖼️ What I read from your photo"):
+                    with st.expander("🖼 What I read from your photo"):
                         st.text(image_read)
                 if video_note.startswith("🎬") and st.session_state.get("video_text"):
                     with st.expander("📄 Video transcript (check names here)"):
