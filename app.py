@@ -28,6 +28,7 @@ AUDIO_MODEL = "whisper-large-v3"
 SMALL_MODEL = "openai/gpt-oss-20b"
 LOGO_FILE = "logo.png"
 MAX_HISTORY = 12
+MAX_IMAGES = 3
 
 ALLOWED_LANGS = ["english", "urdu", "hindi"]
 LANG_CODES = {"English": "en", "اردو": "ur"}
@@ -220,8 +221,140 @@ ai_on = st.toggle(
     "🎙️ AI transcript for videos without captions (uses Supadata credits)",
     value=True,
 )
+# ---------- Photo picker: its own camera/gallery buttons, no Streamlit upload needed ----------
+PICKER_HTML = r"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent;
+    font-family: Arial, Helvetica, sans-serif; color: #e9e2ff; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .btn { position: relative; overflow: hidden; display: inline-block; background: #6d28d9;
+    color: #fff; border-radius: 22px; padding: 12px 18px; font-size: 16px; cursor: pointer;
+    user-select: none; }
+  .btn.clear { background: #3b2a6b; display: none; }
+  .btn input { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    opacity: 0; cursor: pointer; font-size: 0; }
+  .thumbs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .thumbs img { height: 72px; border-radius: 8px; border: 1px solid #8b5cf6; }
+  #msg { margin-top: 8px; font-size: 14px; color: #cfc2f5; min-height: 4px; }
+</style></head>
+<body>
+<div class="row">
+  <div class="btn">📷 Camera<input id="cam" type="file" accept="image/*" capture="environment"></div>
+  <div class="btn">🖼️ Gallery<input id="gal" type="file" accept="image/*" multiple></div>
+  <div class="btn clear" id="clear">🗑️ Clear</div>
+</div>
+<div class="thumbs" id="thumbs"></div>
+<div id="msg"></div>
+<script>
+var MAX_SIDE = 2000, QUALITY = 0.9, MAX_PHOTOS = 3;
+var photos = [];
+var msg = document.getElementById("msg");
+var thumbs = document.getElementById("thumbs");
+var clearBtn = document.getElementById("clear");
+
+function post(type, extra) {
+  window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+}
+function resize() {
+  post("streamlit:setFrameHeight", { height: Math.max(64, document.documentElement.scrollHeight + 4) });
+}
+function publish() {
+  post("streamlit:setComponentValue", { value: { photos: photos }, dataType: "json" });
+}
+function draw() {
+  thumbs.innerHTML = "";
+  photos.forEach(function (p) {
+    var img = document.createElement("img");
+    img.src = p.data;
+    thumbs.appendChild(img);
+  });
+  clearBtn.style.display = photos.length ? "inline-block" : "none";
+  if (photos.length) { msg.textContent = "✅ " + photos.length + " photo(s) ready"; }
+  resize();
+}
+async function toJpeg(file) {
+  var source;
+  try {
+    source = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch (e) {
+    source = await new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+  var w = source.width, h = source.height;
+  var scale = Math.min(1, MAX_SIDE / Math.max(w, h));
+  var canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(w * scale));
+  canvas.height = Math.max(1, Math.round(h * scale));
+  var ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", QUALITY);
+}
+async function handle(files) {
+  msg.textContent = "⏳ Preparing the photo...";
+  var list = Array.prototype.slice.call(files);
+  for (var i = 0; i < list.length; i++) {
+    if (photos.length >= MAX_PHOTOS) { msg.textContent = "Only " + MAX_PHOTOS + " photos at a time."; break; }
+    try {
+      var data = await toJpeg(list[i]);
+      photos.push({ id: Date.now() + "-" + photos.length, name: list[i].name || "photo.jpg", data: data });
+    } catch (e) {
+      msg.textContent = "⚠️ This browser cannot open " + (list[i].name || "that file") + ". Try a jpg or png photo.";
+    }
+  }
+  draw();
+  publish();
+}
+["cam", "gal"].forEach(function (id) {
+  var input = document.getElementById(id);
+  input.addEventListener("change", function () {
+    if (input.files && input.files.length) { handle(input.files); }
+    input.value = "";
+  });
+});
+clearBtn.addEventListener("click", function () {
+  photos = [];
+  msg.textContent = "";
+  draw();
+  publish();
+});
+window.addEventListener("message", function (event) {
+  if (event.data && event.data.type === "streamlit:render") { resize(); }
+});
+post("streamlit:componentReady", { apiVersion: 1 });
+resize();
+</script>
+</body></html>"""
+
+
+def make_photo_picker():
+    """Registers the photo picker component. Returns None if that is not possible."""
+    try:
+        folder = os.path.join(tempfile.gettempdir(), "quantum_ai_photo_picker")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "index.html")
+        current = ""
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                current = f.read()
+        if current != PICKER_HTML:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(PICKER_HTML)
+        return components.declare_component("quantum_photo_picker", path=folder)
+    except Exception:
+        return None
+
+
+photo_picker = make_photo_picker()
+
 camera_on = st.toggle(
-    "📷 Quick camera (low quality). For sharp photos use the + button, then Camera",
+    "📷 Quick camera (low quality). For sharp photos use the photo picker below",
     value=False,
 )
 cam, cam_text, send_cam = None, "", False
@@ -234,6 +367,25 @@ if camera_on:
     send_cam = st.button(
         "📤 Send photo", key="camsend_%d" % cam_n, disabled=cam is None
     )
+
+pending_photos = []
+send_picked = False
+if photo_picker is not None:
+    picker_n = st.session_state.get("picker_n", 0)
+    with st.expander("📷 Photo: camera or gallery (use this if the + button fails)"):
+        picked = photo_picker(key="picker_%d" % picker_n, default=None)
+        if isinstance(picked, dict):
+            for item in (picked.get("photos") or [])[:MAX_IMAGES]:
+                try:
+                    pending_photos.append(base64.b64decode(item["data"].split(",", 1)[1]))
+                except Exception:
+                    pass
+        if pending_photos:
+            st.caption(
+                "✅ %d photo(s) ready. Type your question below and send, or press "
+                "the button." % len(pending_photos)
+            )
+            send_picked = st.button("📤 Send photo(s) now", key="picksend_%d" % picker_n)
 
 UNLOCK_HTML = r"""
 <script>
@@ -1606,7 +1758,6 @@ def generate_image(prompt):
 
 
 # ---------- Photos: the user sends a picture, a vision model reads it ----------
-MAX_IMAGES = 3
 MAX_SIDE = 2000
 DEFAULT_IMAGE_QUESTION = (
     "اس تصویر کا تفصیل سے تجزیہ کرو اور بتاؤ اس میں کیا ہے۔ اگر اس میں کوئی "
@@ -2118,7 +2269,7 @@ except TypeError:
 
 camera_send = bool(send_cam and cam is not None)
 
-if prompt or camera_send:
+if prompt or camera_send or send_picked:
     user_text = (prompt.text if prompt else "") or ""
     files = list(getattr(prompt, "files", None) or []) if prompt else []
     images = []
@@ -2151,6 +2302,14 @@ if prompt or camera_send:
             images.append(prepared)
         else:
             failed.append(getattr(file, "name", "file"))
+    for raw in pending_photos[: max(0, MAX_IMAGES - len(images))]:
+        prepared = prepare_image(raw)
+        if prepared:
+            images.append(prepared)
+        else:
+            failed.append("photo")
+    if pending_photos:
+        st.session_state.picker_n = st.session_state.get("picker_n", 0) + 1
     if len(files) > MAX_IMAGES:
         st.info("ایک وقت میں صرف پہلی %d تصاویر استعمال ہوتی ہیں۔" % MAX_IMAGES)
     if failed:
@@ -2158,7 +2317,7 @@ if prompt or camera_send:
             "یہ فائلیں تصویر کے طور پر نہیں کھل سکیں: " + "، ".join(failed)
             + "۔ اگر یہ آئی فون کی HEIC تصویر ہے تو اسے jpg میں بدل کر بھیجیں۔"
         )
-    if files and not images:
+    if (files or pending_photos) and not images:
         st.stop()
     if images and not user_text.strip():
         user_text = DEFAULT_IMAGE_QUESTION
