@@ -1679,16 +1679,29 @@ UNCLEAR_WORDS = re.compile(
 def prepare_image(data):
     """Straightens (phone rotation), shrinks and re-encodes a photo as JPEG bytes."""
     try:
-        from PIL import Image, ImageOps
+        from PIL import Image, ImageFile, ImageFilter, ImageOps
 
+        ImageFile.LOAD_TRUNCATED_IMAGES = True  # half-saved gallery or camera files
         Image.MAX_IMAGE_PIXELS = 300_000_000
         photo = Image.open(io.BytesIO(data))
         try:
             photo.draft("RGB", (MAX_SIDE * 2, MAX_SIDE * 2))  # fast decode of huge JPEGs
         except Exception:
             pass
-        photo = ImageOps.exif_transpose(photo).convert("RGB")
+        photo = ImageOps.exif_transpose(photo)
+        if photo.mode in ("RGBA", "LA", "P"):
+            photo = photo.convert("RGBA")
+            page = Image.new("RGBA", photo.size, (255, 255, 255, 255))
+            page.alpha_composite(photo)
+            photo = page
+        photo = photo.convert("RGB")
+        width, height = photo.size
+        if max(width, height) < 1400:  # small camera photo: enlarge so text is easier to read
+            scale = 1400.0 / max(width, height)
+            photo = photo.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
         photo.thumbnail((MAX_SIDE, MAX_SIDE))
+        photo = ImageOps.autocontrast(photo, cutoff=1)
+        photo = photo.filter(ImageFilter.UnsharpMask(radius=1.6, percent=110, threshold=3))
         out = io.BytesIO()
         photo.save(out, "JPEG", quality=90)
         return out.getvalue()
@@ -1700,7 +1713,9 @@ def rotate_jpeg(data, angle):
     try:
         from PIL import Image
 
-        photo = Image.open(io.BytesIO(data)).rotate(angle, expand=True)
+        photo = Image.open(io.BytesIO(data)).rotate(
+            angle, expand=True, fillcolor=(255, 255, 255)
+        )
         out = io.BytesIO()
         photo.save(out, "JPEG", quality=90)
         return out.getvalue()
@@ -1779,7 +1794,7 @@ def read_photo(data, question):
     if text and unclear_score(text) < 3:
         return text, ""
     best = text
-    for angle in (90, 270):
+    for angle in (90, 270, 10, -10):
         rotated = rotate_jpeg(data, angle)
         if not rotated:
             continue
@@ -2274,6 +2289,11 @@ for index, message in enumerate(st.session_state.messages):
         message.get("images"),
     )
 
+PATTERN_AFTER = re.compile(
+    r"(?i)\b(pattern|same (way|pattern|style|format)|isi (tarah|pattern)|"
+    r"next question|agla sawal)\b"
+    r"|پیٹرن|اسی (طرح|انداز|طریقے|پیٹرن)|اگلا سوال|पैटर्न|अगला सवाल"
+)
 IMAGE_TYPES = ["png", "jpg", "jpeg", "jpe", "jfif", "webp", "gif", "bmp", "tif",
                "tiff", "heic", "heif", "avif"]
 try:
@@ -2281,7 +2301,7 @@ try:
         "Ask Quantum",
         accept_audio=True,
         accept_file="multiple",
-        file_type=IMAGE_TYPES + list(DOC_TYPES),
+        file_type=None,
     )
 except TypeError:
     try:
@@ -2448,6 +2468,15 @@ if prompt or camera_send:
                     extra = ""
                     video_note = ""
                     image_note = ""
+                    if (
+                        not images
+                        and st.session_state.get("image_info")
+                        and PATTERN_AFTER.search(user_text)
+                    ):
+                        st.session_state.reference_info = st.session_state.pop("image_info")
+                        st.session_state.reference_task = user_text
+                        fresh_reference = True
+                        image_note = "📌 Reference example saved"
                     if images:
                         description, vision_error = describe_images(
                             images, user_text
