@@ -561,6 +561,18 @@ def find_photos(query):
     return urls[:4], sources, ("" if urls else "کوئی تصویر نہیں ملی")
 
 
+def photo_links(photos):
+    """Open/save links for photos found on the web (they are not files we hold)."""
+    if not photos:
+        return
+    links = " ".join(
+        "[⬇️ تصویر %d](%s)" % (n, url.replace(")", "%29"))
+        for n, url in enumerate(photos, 1)
+    )
+    st.markdown(links)
+    st.caption("لنک دبا کر تصویر کھولیں، پھر اسے دیر تک دبا کر محفوظ کریں۔")
+
+
 def show_sources(sources, label="🔎 Sources"):
     """A folded list of the pages an answer is based on."""
     if not sources:
@@ -1055,6 +1067,8 @@ def make_image_plan(history):
             return route_override("PICTURE", last[:300], last)
         return "", ""
     kind, plan = parse_plan(text, last)
+    if kind == "PHOTO" and IMAGE_VERBS.search(last):
+        kind = "PICTURE"
     return route_override(kind, plan, last)
 
 
@@ -2220,11 +2234,12 @@ def show_message(role, text, image=None, key=0, svg=None, explanation=None,
                 st.markdown(explanation)
         elif photos:
             st.image(photos, width=240)
-            st.caption(text)
+            st.caption("🌐 یہ انٹرنیٹ سے ملی ہوئی اصل تصاویر ہیں، ایپ نے نہیں بنائیں")
+            photo_links(photos)
             show_sources(sources, "📎 Sources")
         elif image:
             st.image(image)
-            st.caption(text)
+            st.caption("🎨 یہ تصویر ایپ نے خود بنائی ہے")
             image_download_button(image, key)
         else:
             st.markdown(text)
@@ -2371,7 +2386,7 @@ if prompt or camera_send:
                 st.stop()
             elif img:
                 st.image(img)
-                st.caption("🎨 " + plan)
+                st.caption("🎨 یہ تصویر ایپ نے خود بنائی ہے: " + plan)
                 image_download_button(img, slot)
                 st.session_state.messages.append(
                     {
@@ -2396,7 +2411,8 @@ if prompt or camera_send:
                 st.stop()
             elif photos:
                 st.image(photos, width=240)
-                st.caption("📷 " + plan)
+                st.caption("🌐 یہ انٹرنیٹ سے ملی ہوئی اصل تصاویر ہیں، ایپ نے نہیں بنائیں: " + plan)
+                photo_links(photos)
                 show_sources(photo_sources, "📎 Sources")
                 st.session_state.messages.append(
                     {
