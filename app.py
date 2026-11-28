@@ -376,6 +376,28 @@ system_text = (
     + MATH_RULES
 )
 
+SYSTEM_COMPACT = (
+    "You are Quantum AI, a friendly assistant made by Muhammad Umer. Mention your "
+    "creator only when someone asks who made you. Today is " + today + ". "
+    "LANGUAGE RULES (very important): look at the language of the user's message "
+    "and answer in that same language. An English message gets plain English only. "
+    "A message in Urdu script gets Urdu script only. A message in Roman Urdu (Urdu "
+    "written with English letters) gets Roman Urdu. Never use Hindi words or "
+    "greetings such as Namaste. Never mix languages in one answer. "
+    "Examples: User: hi -> Hello! I am Quantum AI. How can I help you today? | "
+    "User: سلام -> وعلیکم السلام! میں کوانٹم اے آئی ہوں۔ میں آپ کی کیا مدد کر سکتا ہوں؟ | "
+    "User: aap kaise hain -> Main theek hoon, shukriya. Aap kaise hain? "
+    "URDU SPELLING: use correct standard Pakistani Urdu with short simple sentences "
+    "and common words; use the letters ی ک ہ (never ي ك ه); write کے لیے, اس کی, "
+    "ان کا as separate words; never invent words. "
+    "LENGTH: keep answers short (2 to 5 sentences) unless the user asks for details; "
+    "then write 250 to 500 words with short headings or bullets. "
+    "A shared video, photo or document is only background: use it only if the "
+    "question is about it, otherwise ignore it. "
+    "Formulas: write them in LaTeX, $...$ inline and $$...$$ on separate lines for "
+    "display equations. Solve maths problems step by step."
+)
+
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GROK_API_KEY")
 if not API_KEY and not CUSTOM_URL:
     st.error(
@@ -446,6 +468,9 @@ def make_search_plan(history):
     last = history[-1]["content"] if history else ""
     convo = "\n".join(m["role"] + ": " + m["content"][:300] for m in history[-3:])
     fallback = {"queries": [last[:150]], "steam": ""}
+    if prefer_custom():
+        # no extra slow model call on your own server: a keyword check decides
+        return (fallback if needs_search(last) else None), ""
     year = today[-4:]
     try:
         text = ask_small(
@@ -2075,9 +2100,17 @@ def rate_limit_wait(error):
 
 def flatten_messages(messages):
     """Turns the chat list into one plain prompt for a simple /generate endpoint."""
-    names = {"system": "System", "user": "User", "assistant": "Assistant"}
-    parts = [names.get(m["role"], m["role"]) + ": " + m["content"] for m in messages]
-    return "\n\n".join(parts) + "\n\nAssistant:"
+    system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+    names = {"user": "User", "assistant": "Assistant"}
+    turns = [
+        names[m["role"]] + ": " + m["content"]
+        for m in messages if m["role"] in names
+    ]
+    return (
+        "### Instructions (follow them, never repeat them)\n" + system
+        + "\n\n### Conversation\n" + "\n\n".join(turns)
+        + "\n\nWrite only the next Assistant reply, in the user's language.\nAssistant:"
+    )
 
 
 def custom_call(messages, temperature=0.4):
@@ -2088,7 +2121,7 @@ def custom_call(messages, temperature=0.4):
         "prompt": flatten_messages(messages),
         "messages": messages,
         "stream": False,
-        "temperature": temperature,
+        "temperature": min(temperature, 0.3),
     }
     if CUSTOM_MODEL:
         body["model"] = CUSTOM_MODEL
@@ -2226,6 +2259,7 @@ def ask_small(messages, max_tokens=600):
 if CUSTOM_URL:
     with st.expander("🧪 اپنے سرور کا ٹیسٹ"):
         if st.button("ٹیسٹ کریں", key="custom_test"):
+            t0 = time.time()
             with st.spinner("سرور سے رابطہ ہو رہا ہے..."):
                 raw_reply, test_error = custom_call(
                     [{"role": "user", "content": "Say hello in one short sentence."}], 0.2
@@ -2233,7 +2267,7 @@ if CUSTOM_URL:
             if test_error:
                 st.error("رابطہ نہیں ہوا: " + test_error)
             else:
-                st.success("رابطہ ہو گیا۔ سرور کا اصل جواب نیچے ہے:")
+                st.success("رابطہ ہو گیا (%d سیکنڈ)۔ سرور کا اصل جواب نیچے ہے:" % (time.time() - t0))
                 st.code(raw_reply[:600])
                 st.write("ایپ کو جو متن سمجھ آیا:", parse_custom_reply(raw_reply) or "(کچھ نہیں)")
 
@@ -2766,10 +2800,12 @@ if prompt or camera_send or upload_send:
                                     prefix + "\n\nUSER MESSAGE:\n" + last["content"]
                                 ),
                             }
-                        system = system_text + extra + summary_block(summary_chars) + more
+                        base_prompt = SYSTEM_COMPACT if prefer_custom() else system_text
+                        system = base_prompt + extra + summary_block(summary_chars) + more
                         to_send = [{"role": "system", "content": system}] + history
                         return fix_math(ask_model(to_send, temp or 0.4, custom=use_custom))
 
+                    t_start = time.time()
                     try:
                         answer = attempt(VIDEO_CTX_CHARS, history_chars)
                     except Exception as first_error:
@@ -2784,7 +2820,9 @@ if prompt or camera_send or upload_send:
 
                     custom_error = st.session_state.pop("custom_error", "")
                     if st.session_state.pop("custom_used", False):
-                        search_note = (search_note + " 🏠 اپنے سرور سے جواب").strip()
+                        search_note = (
+                            search_note + " 🏠 اپنے سرور سے جواب (%d سیکنڈ)" % (time.time() - t_start)
+                        ).strip()
                     elif custom_error:
                         search_note = (
                             search_note + " ↪️ اپنا سرور نہیں ملا، Groq استعمال ہوا ("
