@@ -225,7 +225,7 @@ fix_on = st.toggle(
 )
 use_custom = st.toggle(
     "🏠 جوابات کے لیے اپنا Ollama سرور استعمال کریں",
-    value=False,
+    value=bool(CUSTOM_URL),
     disabled=not CUSTOM_URL,
     help="پہلے Secrets میں CUSTOM_API_URL اور CUSTOM_API_KEY لکھیں",
 )
@@ -377,14 +377,20 @@ system_text = (
 )
 
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GROK_API_KEY")
-if not API_KEY:
-    st.error("API key نہیں ملی۔ Streamlit secrets میں GROQ_API_KEY شامل کریں۔")
+if not API_KEY and not CUSTOM_URL:
+    st.error(
+        "کوئی انجن نہیں ملا۔ Streamlit secrets میں CUSTOM_API_URL (اپنا سرور) "
+        "یا GROQ_API_KEY میں سے کم از کم ایک شامل کریں۔"
+    )
     st.stop()
 
-client = OpenAI(
-    api_key=API_KEY,
-    base_url="https://api.groq.com/openai/v1",
+# client is None when there is no Groq key: then everything goes to your own server
+client = (
+    OpenAI(api_key=API_KEY, base_url="https://api.groq.com/openai/v1")
+    if API_KEY
+    else None
 )
+NO_GROQ_NOTE = "یہ کام Groq key کے بغیر نہیں ہو سکتا (GROQ_API_KEY شامل کریں)"
 
 # ---------- Web search (Tavily) ----------
 TAVILY_KEY = st.secrets.get("TAVILY_API_KEY")
@@ -1756,6 +1762,8 @@ def unclear_score(text):
 
 def vision_call(image, question):
     """One request with one photo. Returns (text, error)."""
+    if client is None:
+        return "", "تصویر پڑھنے کے لیے Groq key درکار ہے (GROQ_API_KEY شامل کریں)"
     content = [
         {
             "type": "text",
@@ -2096,7 +2104,7 @@ def custom_call(messages, temperature=0.4):
         CUSTOM_URL, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST"
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as r:
+        with urllib.request.urlopen(request, timeout=95) as r:
             return r.read().decode("utf-8", errors="replace"), ""
     except urllib.error.HTTPError as error:
         try:
@@ -2132,25 +2140,42 @@ def parse_custom_reply(raw):
     return re.sub(r"(?s)<think>.*?</think>", "", text).strip()
 
 
+def prefer_custom():
+    """True when requests should go to your own server first."""
+    if not CUSTOM_URL:
+        return False
+    if client is None:
+        return True
+    if not use_custom:
+        return False
+    # after a failure, use Groq for a minute instead of waiting again
+    return time.time() - st.session_state.get("custom_down", 0) > 60
+
+
 def custom_chat(messages, temperature=0.4):
     """Returns (answer, error) from your own server."""
     raw, error = custom_call(messages, temperature)
     if error:
+        st.session_state.custom_down = time.time()
         return "", error
     text = parse_custom_reply(raw)
     if not text:
+        st.session_state.custom_down = time.time()
         return "", "سرور کا جواب سمجھ نہیں آیا: " + raw[:150]
+    st.session_state.pop("custom_down", None)
     return text, ""
 
 
 def ask_model(messages, temperature=0.4, custom=False):
     """Main model. Short rate limit: wait and retry. Daily limit: backup model."""
-    if custom and CUSTOM_URL:
+    if prefer_custom() or (custom and CUSTOM_URL and client is not None):
         text, error = custom_chat(messages, temperature)
         if text:
             st.session_state.custom_used = True
             return text
         st.session_state.custom_error = error
+        if client is None:
+            raise RuntimeError("آپ کے اپنے سرور سے جواب نہیں ملا: " + error)
     try:
         return ask_once(messages, None, temperature)
     except Exception as error:
@@ -2166,6 +2191,12 @@ def ask_model(messages, temperature=0.4, custom=False):
 
 def ask_small(messages, max_tokens=600):
     """Helper model for small jobs. Its Groq daily limit is separate."""
+    if prefer_custom():
+        text, error = custom_chat(messages, 0.2)
+        if text:
+            return text
+        if client is None:
+            raise RuntimeError("آپ کے اپنے سرور سے جواب نہیں ملا: " + error)
     try:
         try:
             result = client.chat.completions.create(
@@ -2287,15 +2318,17 @@ def protect_parts(text):
 def proofread_urdu(text):
     """Second pass: a low-temperature proofreader. Returns the original if anything looks wrong."""
     masked, saved = protect_parts(text)
+    proof_messages = [
+        {"role": "system", "content": PROOF_SYSTEM},
+        {"role": "user", "content": masked},
+    ]
     try:
-        result = ask_once(
-            [
-                {"role": "system", "content": PROOF_SYSTEM},
-                {"role": "user", "content": masked},
-            ],
-            MODEL_NAME,
-            0.1,
-        )
+        if prefer_custom():
+            result, _ = custom_chat(proof_messages, 0.1)
+        elif client is not None:
+            result = ask_once(proof_messages, MODEL_NAME, 0.1)
+        else:
+            return text
     except Exception:
         return text
     result = re.sub(r"(?s)<think>.*?</think>", "", result or "").strip()
@@ -2453,7 +2486,9 @@ if prompt or camera_send or upload_send:
         st.session_state.up_n = st.session_state.get("up_n", 0) + 1
 
     audio = getattr(prompt, "audio", None) if prompt else None
-    if audio:
+    if audio and client is None:
+        st.warning("مائک سے بولنے کے لیے Groq key درکار ہے (GROQ_API_KEY شامل کریں)۔")
+    elif audio:
         try:
             spoken = transcribe(audio.getvalue())
             if spoken is None:
